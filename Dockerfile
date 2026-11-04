@@ -3,7 +3,7 @@
 FROM rust:1-trixie
 RUN apt-get update && apt-get install -y --no-install-recommends slurm-wlm munge \
  && rm -rf /var/lib/apt/lists/* \
- && groupadd -g 3555 proposal-users
+ && groupadd -g 3555 exfel
 WORKDIR /src
 COPY . .
 RUN cargo test --release && cargo build --release \

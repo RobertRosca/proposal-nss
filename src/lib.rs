@@ -6,6 +6,7 @@ use libnss::passwd::{Passwd, PasswdHooks};
 use libnss::{libnss_group_hooks, libnss_initgroups_hooks, libnss_passwd_hooks};
 
 const BASE: u32 = 600_000_000;
+// GID of the `exfel` group.
 const PRIMARY_GID: u32 = 3555;
 
 fn uid_to_no(uid: u32) -> Option<u32> {
