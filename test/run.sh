@@ -34,13 +34,15 @@ for _ in $(seq 30); do sinfo -h -o %T 2>/dev/null | grep -q idle && break; sleep
 sinfo -h -o %T | grep -q idle || { sinfo; tail -n 30 /var/log/slurm/*.log; exit 1; }
 
 echo "--- NSS"
+# the proposal group is managed elsewhere: 1234 has one, 1235 does not
+GID=600012342
+groupadd -g $GID 60001234-part
 getent passwd $U | grep -x "$N:x:$U:15355:p001234 user:/nonexistent:/sbin/nologin"
 getent passwd $N >/dev/null
-GN=60001234-part
-getent group 600012342 | grep -x "$GN:x:600012342:"
-getent group $GN >/dev/null
-id $N | grep -F "uid=$U($N) gid=15355" | grep -F "600012342($GN)"
-id -G $N | grep -w 3555
+id $N | grep -F "uid=$U($N) gid=15355(exfel_prop_syn)" | grep -F "$GID(60001234-part)" | grep -F "3555(exfel)"
+# the module exposes no groups
+! getent group 600012352
+! getent group 60001235-part
 for k in 599999999 601000000 euxfel-p1234; do ! getent passwd $k || exit 1; done
 
 echo "--- root submits as proposal user; job submits a nested job as itself"

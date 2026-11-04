@@ -8,5 +8,6 @@ WORKDIR /src
 COPY . .
 RUN cargo test --release && cargo build --release \
  && install -m644 target/release/libnss_proposal.so /usr/lib/libnss_proposal.so.2 \
- && sed -i -E 's/^(passwd|group):.*/& proposal/' /etc/nsswitch.conf
+ && sed -i -E 's/^passwd:.*/& proposal/' /etc/nsswitch.conf \
+ && echo 'initgroups: files proposal' >> /etc/nsswitch.conf
 CMD ["bash", "/src/test/run.sh"]
