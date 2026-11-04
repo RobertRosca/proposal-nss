@@ -42,3 +42,30 @@ fn proposal_user_job_submits_nested_job_as_itself() {
     assert!(outer.contains(&format!("UserId={N}({U})")), "{outer}");
     assert!(inner.contains(&format!("inner uid={U} user={N}")), "{inner}");
 }
+
+const PROP: &[&str] = &["--uid", U, "--gid", "15355"];
+const OTHER: &[&str] = &["--uid", "55636", "--gid", "3555"];// real user, primary group exfel (3555)
+
+/// Submits `--wrap cmd` as `who` to `partition`; returns (accepted, job output or sbatch stderr).
+fn job(name: &str, who: &[&str], partition: &str, cmd: &str) -> (bool, String) {
+    let out = format!("/tmp/slurm-{name}.out");
+    fs::write(&out, "").unwrap();
+    ok("chmod", &["666", &out]);
+    let o = std::process::Command::new("sbatch")
+        .args(["--wait", "--chdir", "/tmp", "--partition", partition, "--output", &out])
+        .args(who)
+        .args(["--wrap", cmd])
+        .output()
+        .unwrap();
+    let text = if o.status.success() { fs::read_to_string(&out).unwrap() } else { String::from_utf8_lossy(&o.stderr).into_owned() };
+    (o.status.success(), text)
+}
+
+/// With LaunchParameters=disable_send_gids slurmd resolves groups itself (initgroups via NSS).
+#[test]
+fn proposal_user_job_gets_supplementary_groups() {
+    let (accepted, out) = job("groups", PROP, "debug", "id -G; getent initgroups euxfel-p001234");
+    assert!(accepted, "{out}");
+    // primary exfel_prop_syn, supplementary exfel, plus the proposal group 60001234-part
+    assert!(out.starts_with("15355 3555 600012342\n"), "{out}");
+}
