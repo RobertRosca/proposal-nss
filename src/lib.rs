@@ -6,8 +6,9 @@ use libnss::passwd::{Passwd, PasswdHooks};
 use libnss::{libnss_group_hooks, libnss_initgroups_hooks, libnss_passwd_hooks};
 
 const BASE: u32 = 600_000_000;
-// GID of the `exfel` group.
-const PRIMARY_GID: u32 = 3555;
+// GID of the `exfel_prop_syn` group (primary), and of `exfel` (supplementary, via initgroups).
+const PRIMARY_GID: u32 = 15355;
+const SUPP_GID: u32 = 3555;
 
 fn uid_to_no(uid: u32) -> Option<u32> {
     uid.checked_sub(BASE).filter(|n| *n < 1_000_000)
@@ -40,6 +41,11 @@ fn group(no: u32) -> Group {
         gid: BASE + no,
         members: vec![],
     }
+}
+
+// name only; the real `exfel` entry is resolved by the other NSS sources
+fn exfel() -> Group {
+    Group { name: "exfel".into(), passwd: "x".into(), gid: SUPP_GID, members: vec![] }
 }
 
 fn found<T>(v: Option<T>) -> Response<T> {
@@ -79,7 +85,7 @@ struct ProposalInitgroups;
 libnss_initgroups_hooks!(proposal, ProposalInitgroups);
 impl InitgroupsHooks for ProposalInitgroups {
     fn get_entries_by_user(user: String) -> Response<Vec<Group>> {
-        found(name_to_no(&user).map(|n| vec![group(n)]))
+        found(name_to_no(&user).map(|n| vec![group(n), exfel()]))
     }
 }
 
@@ -94,7 +100,7 @@ mod tests {
         assert_eq!(uid_to_no(600_999_999), Some(999_999));
         assert_eq!(uid_to_no(601_000_000), None);
         let p = passwd(1234);
-        assert_eq!((p.name.as_str(), p.uid, p.gid), ("euxfel-p001234", 600_001_234, 3555));
+        assert_eq!((p.name.as_str(), p.uid, p.gid), ("euxfel-p001234", 600_001_234, 15355));
         assert_eq!(p.gecos, "p001234 user");
         assert_eq!(name_to_no(&p.name), Some(1234));
         for bad in ["euxfel-p1234", "euxfel-p1000000", "euxfel-p+12345", "euxfel-p00123x", "root"] {

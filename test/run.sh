@@ -34,10 +34,11 @@ for _ in $(seq 30); do sinfo -h -o %T 2>/dev/null | grep -q idle && break; sleep
 sinfo -h -o %T | grep -q idle || { sinfo; tail -n 30 /var/log/slurm/*.log; exit 1; }
 
 echo "--- NSS"
-getent passwd $U | grep -x "$N:x:$U:3555:p001234 user:/nonexistent:/sbin/nologin"
+getent passwd $U | grep -x "$N:x:$U:15355:p001234 user:/nonexistent:/sbin/nologin"
 getent passwd $N >/dev/null
 getent group $U | grep -x "$N:x:$U:"
-id $N | grep -F "uid=$U($N) gid=3555" | grep -F "$U($N)"
+id $N | grep -F "uid=$U($N) gid=15355" | grep -F "$U($N)"
+id -G $N | grep -w 3555
 for k in 599999999 601000000 euxfel-p1234; do ! getent passwd $k || exit 1; done
 
 echo "--- root submits as proposal user; job submits a nested job as itself"
@@ -51,7 +52,7 @@ scontrol show job "$inner" | grep -o 'UserId=[^ ]*'
 JOB
 chmod 755 /tmp/outer.sh
 touch /tmp/outer.out /tmp/inner.out; chmod 666 /tmp/outer.out /tmp/inner.out
-sbatch --uid=$U --gid=3555 --wait --chdir=/tmp --output=/tmp/outer.out /tmp/outer.sh
+sbatch --uid=$U --gid=15355 --wait --chdir=/tmp --output=/tmp/outer.out /tmp/outer.sh
 cat /tmp/outer.out /tmp/inner.out
 grep -F "outer uid=$U user=$N" /tmp/outer.out
 grep -F "UserId=$N($U)" /tmp/outer.out
