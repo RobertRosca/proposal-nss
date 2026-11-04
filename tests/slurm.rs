@@ -217,10 +217,12 @@ fn allowaccounts_accepts_associated_proposal_user_and_rejects_other_accounts() {
 ///   exfel,exfel_prop_syn / exfel_prop_syn,exfel / exfel_prop_syn,root -> proposal user accepted
 ///   exfel_prop_syn, exfel_prop_syn,exfel_prop_syn, exfel_prop_syn,<unknown group> -> denied
 ///   exfel,root / 60001234-part,root -> denied
-/// Reading: Slurm only falls back to matching the user's primary gid against the listed groups when
-/// the merged member-uid list is non-empty; exfel_prop_syn has no members, so alone the list is empty
-/// and everything is denied. A real group with members next to it makes the gid match work. Works
-/// without module enumeration, but relies on unspecified slurmctld behaviour: prefer AllowAccounts.
+/// Explained by slurmctld source (partition_mgr.c validate_group, same in 24.11.5 and 25.11.5):
+/// allow_uids = gr_mem + getpwent scan of users whose primary gid is a listed group. If that list
+/// is EMPTY validate_group returns 0 at once; otherwise, as a documented fallback for sites with
+/// enumeration disabled (sssd enumerate=False), it checks the user's PRIMARY group name (getgrgid
+/// of the passwd gid) against AllowGroups. So the synthetic primary group works only when at least
+/// one other listed group resolves to a non-empty member list; supplementary groups are never used.
 #[test]
 fn allowgroups_real_plus_synthetic_group_accepts_proposal_user() {
     let (accepted, err) = job("prop-both", &who(&prop(1234)), "both", "true");
