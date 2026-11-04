@@ -19,7 +19,7 @@ rustc --version
 ver=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
 n=proposal-nss-$ver
 top=$HOME/rpmbuild; mkdir -p $top/SOURCES
-tar czf $top/SOURCES/$n.tar.gz --transform "s,^,$n/," Cargo.toml Cargo.lock src sudoers
+tar czf $top/SOURCES/$n.tar.gz --transform "s,^,$n/," Cargo.toml Cargo.lock src sudoers etc
 cargo vendor -q vendor
 tar czf $top/SOURCES/$n-vendor.tar.gz vendor
 rpmbuild -ba --define "pkg_version $ver" packaging/proposal-nss.spec
