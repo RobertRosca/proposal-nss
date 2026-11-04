@@ -7,7 +7,7 @@ bin=$1
 so=$(realpath -e "$(dirname "$bin")/../libnss_proposal.so") # cdylib sits next to deps/
 t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
 mkdir "$t/lib"; ln -s "$so" "$t/lib/libnss_proposal.so.2"
-printf 'passwd: files proposal\ngroup: files\ninitgroups: files proposal\n' > "$t/nsswitch.conf"
+printf 'passwd: files proposal\ngroup: files proposal\n' > "$t/nsswitch.conf"
 # groups that exist outside this module in production; 1234 has a proposal group, 1235 does not
 cp /etc/group "$t/group"
 printf 'exfel:x:3555:\nexfel_prop_syn:x:15355:\n60001234-part:x:600012342:\n' >> "$t/group"
