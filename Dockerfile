@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Test image: builds the module against the container's glibc, installs it next to a
-# single-node Slurm (Debian packages, munge auth, no accounting DB), then runs the
+# single-node Slurm (Debian packages, munge auth, slurmdbd+MariaDB accounting), then runs the
 # integration tests via cargo-nextest (see .config/nextest.toml).
 
 ARG RUST_IMAGE=rust:1-trixie
@@ -21,11 +21,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 #!/bin/bash
 set -euo pipefail
 apt-get update
-apt-get install -y --no-install-recommends slurm-wlm munge sudo
+apt-get install -y --no-install-recommends slurm-wlm slurmdbd mariadb-server munge sudo
 groupadd -g 3555 exfel
 groupadd -g 15355 exfel_prop_syn
 useradd -M -u 55635 -g 3555 xdamnprd
 useradd -M -u 55636 -g 3555 otheruser
+useradd -M -u 55637 -g 3555 outsider
 EOT
 COPY --from=nextest /usr/local/cargo/bin/cargo-nextest /usr/local/cargo/bin/
 
