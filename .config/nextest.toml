@@ -56,5 +56,5 @@ path = "junit.xml"
 max-threads = 1
 
 [[profile.default.overrides]]
-filter = 'binary(nss)'
+filter = 'binary(nss) or test(/^prolog_/)'
 test-group = 'nss-conf'

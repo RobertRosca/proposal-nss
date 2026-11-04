@@ -42,6 +42,7 @@ cargo test --release --no-run
 install -m644 target/release/libnss_proposal.so /usr/lib/libnss_proposal.so.2
 install -m440 sudoers/proposal-spawner /etc/sudoers.d/proposal-spawner
 install -m644 etc/proposal-nss.conf /etc/proposal-nss.conf
+install -m755 test/prod-prolog/*.sh /etc/slurm/
 sed -i -E 's/^(passwd|group):.*/& proposal/' /etc/nsswitch.conf
 EOT
 ENTRYPOINT ["cargo", "nextest", "run", "--profile", "ci", "--release"]
