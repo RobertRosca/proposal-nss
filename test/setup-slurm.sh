@@ -1,9 +1,8 @@
 #!/bin/bash
-# Container entrypoint: starts munge+slurmctld+slurmd, creates the external group fixture, runs the tests.
+# nextest setup script: starts munge + slurmctld + slurmd and waits for an idle node.
 set -euo pipefail
-
-# start munge + slurmctld + slurmd, wait for idle node
 host=$(hostname -s)
+
 
 install -d -o munge -g munge /run/munge /var/log/munge
 runuser -u munge -- munged
@@ -31,10 +30,3 @@ slurmctld
 slurmd
 for _ in $(seq 30); do sinfo -h -o %T 2>/dev/null | grep -q idle && break; sleep 1; done
 sinfo -h -o %T | grep -q idle || { sinfo; tail -n 30 /var/log/slurm/*.log; exit 1; }
-
-# the proposal group is managed elsewhere: 1234 has one, 1235 does not
-groupadd -g 600012342 60001234-part
-
-# extra args pass through, e.g. `-E 'not binary(slurm)'`; JUnit goes to target/nextest/ci/junit.xml
-cd /src
-exec cargo nextest run --profile ci --release "$@"

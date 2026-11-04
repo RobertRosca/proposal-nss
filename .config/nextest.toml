@@ -1,3 +1,23 @@
+experimental = ["setup-scripts"]
+
+[scripts.setup.nss-fixtures]
+command = 'test/setup-fixtures.sh'
+
+[scripts.setup.slurm]
+command = 'test/setup-slurm.sh'
+slow-timeout = { period = "45s", terminate-after = 2 }
+leak-timeout = "1s" # the daemons outlive the script
+capture-stdout = true
+capture-stderr = true
+
+[[profile.default.scripts]]
+filter = 'binary(nss) or binary(sudo) or binary(slurm)'
+setup = 'nss-fixtures'
+
+[[profile.default.scripts]]
+filter = 'binary(slurm)'
+setup = 'slurm'
+
 [profile.ci]
 fail-fast = false
 
