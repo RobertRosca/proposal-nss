@@ -8,6 +8,10 @@ install -d -o munge -g munge /run/munge /var/log/munge
 runuser -u munge -- munged
 install -d -o slurm -g slurm /var/spool/slurmctld /var/log/slurm
 install -d /var/spool/slurmd
+# Production uses proctrack/cgroup + task/cgroup,task/affinity; not possible in an unprivileged container:
+# slurmd needs a systemd scope (no dbus) and /sys/fs/cgroup is read-only (IgnoreSystemd=yes then
+# fails with 'unable to create cgroup /sys/fs/cgroup/system: Read-only file system').
+# task/affinity fails too: 'task_g_set_affinity: Operation not permitted' (job never starts).
 cat > /etc/slurm/slurm.conf <<CONF
 ClusterName=test
 SlurmctldHost=$host
@@ -19,8 +23,10 @@ SlurmctldLogFile=/var/log/slurm/slurmctld.log
 SlurmdLogFile=/var/log/slurm/slurmd.log
 ProctrackType=proctrack/linuxproc
 TaskPlugin=task/none
-SelectType=select/cons_tres
-SelectTypeParameters=CR_Core
+SelectType=select/linear
+MinJobAge=90
+UsePAM=0
+EnforcePartLimits=ANY
 SlurmdParameters=config_overrides
 NodeName=$host CPUs=4 Sockets=1 CoresPerSocket=4 ThreadsPerCore=1 RealMemory=512 State=UNKNOWN
 PartitionName=debug Nodes=$host Default=YES MaxTime=5 State=UP
