@@ -1,6 +1,6 @@
 // Needs a running single-node Slurm; see test/entrypoint.sh.
 mod common;
-use common::ok;
+use common::{ok, run};
 use std::fs;
 
 const U: &str = "600012342";
@@ -226,4 +226,116 @@ fn allowgroups_real_plus_synthetic_group_accepts_proposal_user() {
     let (accepted, err) = job("prop-both", &who(&prop(1234)), "both", "true");
     assert!(accepted, "{err}");
     assert!(job("other-both", OTHER, "both", "true").0);
+}
+
+// Production prolog/epilog (sanitised copies in test/prod-prolog, installed as /etc/slurm/slurm_{prolog,epilog}.sh,
+// PrologFlags=Alloc,Contain,Serial). They trace to /var/log/slurm/{prolog,epilog}-test.<user>.log.
+// Exp tree (outside /tmp: the epilog rm -rf deletes the user's files there): /fake-exp (exp_dir in /etc/proposal-nss.conf); p001237 exists there, p001238 does not.
+
+const EXP: &str = "/fake-exp/FXE/202201/p001237";
+const HAS_DIR: &[&str] = &["--uid", "600012372", "--gid", "15355"];
+const NO_DIR: &[&str] = &["--uid", "600012382", "--gid", "15355"];
+
+/// Trace of the prolog/epilog for `euxfel-p00123{n}` (n=7 or 8); `clear` it before the job under test.
+fn log(f: &str, n: u8) -> String {
+    fs::read_to_string(format!("/var/log/slurm/{f}-test.euxfel-p00123{n}.log")).unwrap_or_default()
+}
+
+fn clear(n: u8) {
+    for f in ["prolog", "epilog"] {
+        let _ = fs::remove_file(format!("/var/log/slurm/{f}-test.euxfel-p00123{n}.log"));
+    }
+}
+
+/// The epilog finishes after the job; the node must settle on idle, never drain.
+fn node_state() -> String {
+    let mut s = String::new();
+    for _ in 0..30 {
+        let o = ok("sinfo", &["-h", "-N", "-o", "%T"]); // one line per partition
+        s = o.lines().next().unwrap().to_string();
+        assert!(o.lines().all(|l| l == s), "{o}");
+        if s == "idle" || s.starts_with("drain") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    s
+}
+
+fn wait_gone(path: &str) -> bool {
+    for _ in 0..30 {
+        if !std::path::Path::new(path).exists() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    false
+}
+
+#[test]
+fn prolog_runs_for_proposal_user_and_node_stays_idle() {
+    fs::create_dir_all(format!("{EXP}/scratch")).unwrap();
+    clear(7);
+    let (accepted, out) = job("prolog-ok", HAS_DIR, "debug", "echo ran as $(id -un)");
+    assert!(accepted && out.contains("ran as euxfel-p001237"), "{out}");
+    assert_eq!(node_state(), "idle", "prolog log:\n{}\nepilog log:\n{}", log("prolog", 7), log("epilog", 7));
+    let p = log("prolog", 7);
+    assert!(p.contains("mkhomedir_helper euxfel-p001237"), "{p}");
+    assert!(log("epilog", 7).contains("pkill -KILL -U 600012372"), "{}", log("epilog", 7));
+}
+
+/// The prolog checks /home/$SLURM_JOB_USER (never exists for synthetic users), so mkhomedir_helper
+/// runs on every job; with the proposal dir present it creates the module's pw_dir.
+#[test]
+fn prolog_mkhomedir_creates_pw_dir_under_proposal_scratch() {
+    fs::create_dir_all(format!("{EXP}/scratch")).unwrap();
+    let home = format!("{EXP}/scratch/.exfl_prop_syn-home");
+    let _ = fs::remove_dir_all(&home);
+    clear(7);
+    assert!(job("prolog-home", HAS_DIR, "debug", "true").0);
+    assert_eq!(node_state(), "idle");
+    assert!(std::path::Path::new(&home).is_dir(), "{home} missing; prolog log:\n{}", log("prolog", 7));
+    assert!(!std::path::Path::new("/home/euxfel-p001237").exists());
+}
+
+/// Observed: pw_dir=/nonexistent and mkhomedir_helper creates it at the container root (junk dir).
+#[test]
+fn prolog_mkhomedir_creates_nonexistent_junk_dir_without_proposal_dir() {
+    let _ = fs::remove_dir_all("/nonexistent");
+    clear(8);
+    assert!(job("prolog-junk", NO_DIR, "debug", "true").0);
+    assert_eq!(node_state(), "idle", "{}", log("prolog", 8));
+    assert!(std::path::Path::new("/nonexistent").exists(), "prolog log:\n{}", log("prolog", 8));
+}
+
+#[test]
+#[ignore = "known issue: prolog's mkhomedir_helper creates /nonexistent for proposals without a dir (proposal-nss-3fw)"]
+fn desired_prolog_leaves_no_nonexistent_dir() {
+    let _ = fs::remove_dir_all("/nonexistent");
+    clear(8);
+    assert!(job("prolog-nojunk", NO_DIR, "debug", "true").0);
+    assert_eq!(node_state(), "idle");
+    assert!(!std::path::Path::new("/nonexistent").exists());
+}
+
+/// Epilog: pkill -KILL -U $SLURM_UID and find -user $SLURM_UID rm -rf work with the synthetic uid.
+#[test]
+fn prolog_epilog_cleans_synthetic_uid_files_and_processes() {
+    let cmd = "touch /tmp/epilog-junk /var/tmp/epilog-junk /dev/shm/epilog-junk; \
+               setsid nohup sleep 4242 >/dev/null 2>&1 & sleep 1";
+    clear(7);
+    assert!(job("epilog", HAS_DIR, "debug", cmd).0);
+    for f in ["/tmp/epilog-junk", "/var/tmp/epilog-junk", "/dev/shm/epilog-junk"] {
+        assert!(wait_gone(f), "{f} survived; epilog log:\n{}", log("epilog", 7));
+    }
+    let mut alive = true;
+    for _ in 0..30 {
+        alive = run("sh", &["-c", "ps -u 600012372 -o stat= | grep -qv ^Z"]).0 /* zombies (unreaped by PID 1) do not count */;
+        if !alive {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    assert!(!alive, "orphan sleep survived; epilog log:\n{}", log("epilog", 7));
+    assert_eq!(node_state(), "idle");
 }
