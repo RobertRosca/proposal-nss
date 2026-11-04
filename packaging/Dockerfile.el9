@@ -1,0 +1,29 @@
+# syntax=docker/dockerfile:1
+# Builds the RPM against EL9 glibc. Export it with:
+#   docker build -f packaging/Dockerfile.el9 --target rpms --output type=local,dest=dist .
+# Swap EL_IMAGE for registry.access.redhat.com/ubi9/ubi to build on UBI.
+ARG EL_IMAGE=docker.io/almalinux/9-base
+
+FROM ${EL_IMAGE} AS build
+RUN dnf -y install rpm-build redhat-rpm-config rust-toolset sudo gcc tar gzip && dnf clean all
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY src src
+COPY sudoers sudoers
+COPY packaging packaging
+RUN <<EOT
+#!/bin/bash
+set -euo pipefail
+rustc --version
+ver=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+n=proposal-nss-$ver
+top=$HOME/rpmbuild; mkdir -p $top/SOURCES
+tar czf $top/SOURCES/$n.tar.gz --transform "s,^,$n/," Cargo.toml Cargo.lock src sudoers
+cargo vendor -q vendor
+tar czf $top/SOURCES/$n-vendor.tar.gz vendor
+rpmbuild -ba --define "pkg_version $ver" packaging/proposal-nss.spec
+EOT
+
+FROM scratch AS rpms
+COPY --from=build /root/rpmbuild/RPMS /
+COPY --from=build /root/rpmbuild/SRPMS /srpms
