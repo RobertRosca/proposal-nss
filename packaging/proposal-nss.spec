@@ -16,7 +16,7 @@ BuildRequires:  sudo
 Requires:       sudo
 
 # Site-provided: groups exfel/exfel_prop_syn and user xdamnprd come from the directory service.
-# /etc/nsswitch.conf ("passwd: ... proposal", "initgroups: files proposal") is managed by Puppet,
+# /etc/nsswitch.conf ("passwd: ... proposal", "group: ... proposal") is managed by Puppet,
 # see docs/deployment.md (installed as %%doc).
 
 %description

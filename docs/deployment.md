@@ -12,12 +12,20 @@ The package installs everything it can itself. A host manager (e.g. Puppet) only
 
 ### nsswitch.conf
 
+Append `proposal` to the existing `passwd` and `group` lines, e.g.:
+
 ```
-passwd:     ... proposal
-initgroups: files proposal
+passwd:     files sss systemd proposal
+group:      files sss systemd proposal
 ```
 
-Keep `proposal` after the real sources so real users always win.
+Keep `proposal` after the real sources so real users always win. The module has no group
+lookups, only an initgroups hook, which glibc calls from the `group` sources. Do not add an
+`initgroups:` line: it replaces the `group` sources for supplementary groups, so a line
+without `sss` would strip LDAP users' groups.
+
+If `/etc/nsswitch.conf` is owned by another Puppet module (e.g. `ldap::client`), make the
+change there; a separate resource editing the file would be overwritten.
 
 ## Installed by the package (do not template, or use `noreplace`-safe overrides)
 
@@ -37,7 +45,7 @@ file { '/etc/proposal-nss.conf':   # only if GIDs differ from the shipped file
   require      => Package['proposal-nss'],
 }
 
-augeas { 'nsswitch-proposal': ... }  # add `proposal` to passwd and initgroups
+# nsswitch.conf: append `proposal` to passwd and group in the module that owns the file
 ```
 
 No service to restart: nscd/sssd caches may need flushing after changing the config (`nscd -i passwd`).
