@@ -32,7 +32,7 @@ change there; a separate resource editing the file would be overwritten.
 | File | Notes |
 |------|-------|
 | `/usr/lib64/libnss_proposal.so.2` | The NSS module. |
-| `/etc/proposal-nss.conf` | `%config(noreplace)`. Keys `primary_gid` and `supplementary_gid`, both required. Invalid or missing file means the module exposes no users. |
+| `/etc/proposal-nss.conf` | `%config(noreplace)`. Keys `primary_gid` and `supplementary_gid`, both required; optional `exp_dir` (default `/gpfs/exfel/exp`, see "Home directory"). Invalid or missing file means the module exposes no users. |
 | `/etc/sudoers.d/proposal-spawner` | `%config(noreplace)`, mode 0440. Validate with `visudo -cf` before deploying a modified copy. |
 
 ## Puppet sketch
@@ -49,3 +49,12 @@ file { '/etc/proposal-nss.conf':   # only if GIDs differ from the shipped file
 ```
 
 No service to restart: nscd/sssd caches may need flushing after changing the config (`nscd -i passwd`).
+
+### Home directory
+
+`pw_dir` is `{exp_dir}/{instrument}/{cycle}/p{no:06}/scratch/.exfl_prop_syn-home`. The uid only
+encodes the proposal number, so the module scans `{exp_dir}/*/*/p{no:06}` on every passwd lookup
+(no cache; new proposals show up at once). If several proposal directories match, the
+lexicographically smallest path wins. If none match (or `exp_dir` is unreadable, e.g. GPFS not
+mounted) `pw_dir` is `/nonexistent`; the user itself stays visible, since existence is decided by
+the proposal group. The module never creates the directory.
