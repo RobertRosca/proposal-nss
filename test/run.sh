@@ -36,8 +36,10 @@ sinfo -h -o %T | grep -q idle || { sinfo; tail -n 30 /var/log/slurm/*.log; exit 
 echo "--- NSS"
 getent passwd $U | grep -x "$N:x:$U:15355:p001234 user:/nonexistent:/sbin/nologin"
 getent passwd $N >/dev/null
-getent group $U | grep -x "$N:x:$U:"
-id $N | grep -F "uid=$U($N) gid=15355" | grep -F "$U($N)"
+GN=60001234-part
+getent group 600012342 | grep -x "$GN:x:600012342:"
+getent group $GN >/dev/null
+id $N | grep -F "uid=$U($N) gid=15355" | grep -F "600012342($GN)"
 id -G $N | grep -w 3555
 for k in 599999999 601000000 euxfel-p1234; do ! getent passwd $k || exit 1; done
 

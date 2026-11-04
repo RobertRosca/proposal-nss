@@ -14,8 +14,21 @@ fn uid_to_no(uid: u32) -> Option<u32> {
     uid.checked_sub(BASE).filter(|n| *n < 1_000_000)
 }
 
+// Group gid is `60{no:06}2`, i.e. 600_000_002 + 10 * no.
+fn gid_to_no(gid: u32) -> Option<u32> {
+    let d = gid.checked_sub(600_000_002).filter(|d| d % 10 == 0)?;
+    Some(d / 10).filter(|n| *n < 1_000_000)
+}
+
 fn name_to_no(name: &str) -> Option<u32> {
-    let digits = name.strip_prefix("euxfel-p")?;
+    six_digits(name.strip_prefix("euxfel-p")?)
+}
+
+fn group_name_to_no(name: &str) -> Option<u32> {
+    six_digits(name.strip_prefix("60")?.strip_suffix("-part")?)
+}
+
+fn six_digits(digits: &str) -> Option<u32> {
     if digits.len() != 6 || !digits.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
@@ -36,9 +49,9 @@ fn passwd(no: u32) -> Passwd {
 
 fn group(no: u32) -> Group {
     Group {
-        name: format!("euxfel-p{no:06}"),
+        name: format!("60{no:06}-part"),
         passwd: "x".into(),
-        gid: BASE + no,
+        gid: 600_000_002 + 10 * no,
         members: vec![],
     }
 }
@@ -74,10 +87,10 @@ impl GroupHooks for ProposalGroup {
         Response::Success(vec![])
     }
     fn get_entry_by_gid(gid: gid_t) -> Response<Group> {
-        found(uid_to_no(gid).map(group))
+        found(gid_to_no(gid).map(group))
     }
     fn get_entry_by_name(name: String) -> Response<Group> {
-        found(name_to_no(&name).map(group))
+        found(group_name_to_no(&name).map(group))
     }
 }
 
@@ -102,6 +115,13 @@ mod tests {
         let p = passwd(1234);
         assert_eq!((p.name.as_str(), p.uid, p.gid), ("euxfel-p001234", 600_001_234, 15355));
         assert_eq!(p.gecos, "p001234 user");
+        let g = group(900_511);
+        assert_eq!((g.name.as_str(), g.gid), ("60900511-part", 609_005_112));
+        assert_eq!(gid_to_no(609_005_112), Some(900_511));
+        assert_eq!(gid_to_no(609_005_111), None);
+        assert_eq!(gid_to_no(600_000_001), None);
+        assert_eq!(group_name_to_no(&g.name), Some(900_511));
+        assert_eq!(group_name_to_no("60900511"), None);
         assert_eq!(name_to_no(&p.name), Some(1234));
         for bad in ["euxfel-p1234", "euxfel-p1000000", "euxfel-p+12345", "euxfel-p00123x", "root"] {
             assert_eq!(name_to_no(bad), None, "{bad}");
