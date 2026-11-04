@@ -16,7 +16,8 @@ BuildRequires:  sudo
 Requires:       sudo
 
 # Site-provided: groups exfel/exfel_prop_syn and user xdamnprd come from the directory service.
-# /etc/nsswitch.conf ("passwd: ... proposal", "initgroups: files proposal") is managed by Puppet.
+# /etc/nsswitch.conf ("passwd: ... proposal", "initgroups: files proposal") is managed by Puppet,
+# see docs/deployment.md (installed as %%doc).
 
 %description
 glibc NSS module (libnss_proposal.so.2) and the sudoers rule that lets the
@@ -46,6 +47,7 @@ install -Dm644 etc/proposal-nss.conf %{buildroot}%{_sysconfdir}/proposal-nss.con
 visudo -cf sudoers/proposal-spawner
 
 %files
+%doc docs/deployment.md
 %{_libdir}/libnss_proposal.so.2
 %config(noreplace) %attr(0440,root,root) %{_sysconfdir}/sudoers.d/proposal-spawner
 %config(noreplace) %{_sysconfdir}/proposal-nss.conf
