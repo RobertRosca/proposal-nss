@@ -40,6 +40,7 @@ cargo build --release --offline --frozen
 %install
 install -Dm755 target/release/libnss_proposal.so %{buildroot}%{_libdir}/libnss_proposal.so.2
 install -Dm440 sudoers/proposal-spawner %{buildroot}%{_sysconfdir}/sudoers.d/proposal-spawner
+install -Dm644 etc/proposal-nss.conf %{buildroot}%{_sysconfdir}/proposal-nss.conf
 
 %check
 visudo -cf sudoers/proposal-spawner
@@ -47,6 +48,7 @@ visudo -cf sudoers/proposal-spawner
 %files
 %{_libdir}/libnss_proposal.so.2
 %config(noreplace) %attr(0440,root,root) %{_sysconfdir}/sudoers.d/proposal-spawner
+%config(noreplace) %{_sysconfdir}/proposal-nss.conf
 
 %changelog
 * Wed Nov 04 2026 Robert Rosca <32569096+RobertRosca@users.noreply.github.com> - 0.1.0-1

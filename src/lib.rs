@@ -5,9 +5,33 @@ use libnss::interop::Response;
 use libnss::passwd::{Passwd, PasswdHooks};
 use libnss::{libnss_initgroups_hooks, libnss_passwd_hooks};
 
-// GID of `exfel_prop_syn` (primary) and of `exfel` (supplementary).
-const PRIMARY_GID: u32 = 15355;
-const SUPP_GID: u32 = 3555;
+const CONF: &str = "/etc/proposal-nss.conf";
+
+struct Conf {
+    primary_gid: u32,
+    supp_gid: u32,
+}
+
+// `key = value` lines, `#` comments. Both keys required, unknown keys rejected, so a
+// typo fails closed (no users) instead of silently handing out wrong groups.
+fn parse(text: &str) -> Option<Conf> {
+    let (mut primary, mut supp) = (None, None);
+    for line in text.lines().map(|l| l.split('#').next().unwrap_or("").trim()).filter(|l| !l.is_empty()) {
+        let (k, v) = line.split_once('=')?;
+        let v = v.trim().parse().ok();
+        match k.trim() {
+            "primary_gid" => primary = Some(v?),
+            "supplementary_gid" => supp = Some(v?),
+            _ => return None,
+        }
+    }
+    Some(Conf { primary_gid: primary?, supp_gid: supp? })
+}
+
+// Read per lookup: the file is tiny and this keeps Puppet changes live without a restart.
+fn conf() -> Option<Conf> {
+    parse(&std::fs::read_to_string(CONF).ok()?)
+}
 
 // uid == gid of the externally managed proposal group: `60{no:06}2`.
 fn id_of(no: u32) -> u32 {
@@ -49,12 +73,12 @@ fn name_to_no(name: &str) -> Option<u32> {
     digits.parse().ok()
 }
 
-fn passwd(no: u32) -> Passwd {
+fn passwd(no: u32, c: &Conf) -> Passwd {
     Passwd {
         name: format!("euxfel-p{no:06}"),
         passwd: "*".into(), // locked; "x" makes pam_unix look up a shadow entry we don't provide
         uid: id_of(no),
-        gid: PRIMARY_GID,
+        gid: c.primary_gid,
         gecos: format!("p{no:06} user"),
         dir: "/nonexistent".into(), // unspecified, change if homes are needed
         shell: "/sbin/nologin".into(),
@@ -78,10 +102,12 @@ impl PasswdHooks for ProposalPasswd {
         Response::Success(vec![])
     }
     fn get_entry_by_uid(uid: uid_t) -> Response<Passwd> {
-        found(live(id_to_no(uid)).map(passwd))
+        let c = conf();
+        found(c.as_ref().and_then(|c| live(id_to_no(uid)).map(|n| passwd(n, c))))
     }
     fn get_entry_by_name(name: String) -> Response<Passwd> {
-        found(live(name_to_no(&name)).map(passwd))
+        let c = conf();
+        found(c.as_ref().and_then(|c| live(name_to_no(&name)).map(|n| passwd(n, c))))
     }
 }
 
@@ -89,7 +115,8 @@ struct ProposalInitgroups;
 libnss_initgroups_hooks!(proposal, ProposalInitgroups);
 impl InitgroupsHooks for ProposalInitgroups {
     fn get_entries_by_user(user: String) -> Response<Vec<Group>> {
-        found(live(name_to_no(&user)).map(|n| vec![member(id_of(n)), member(SUPP_GID)]))
+        let c = conf();
+        found(c.as_ref().and_then(|c| live(name_to_no(&user)).map(|n| vec![member(id_of(n)), member(c.supp_gid)])))
     }
 }
 
@@ -105,7 +132,12 @@ mod tests {
         assert_eq!(id_to_no(609_005_111), None);
         assert_eq!(id_to_no(609_999_992), Some(999_999));
         assert_eq!(id_to_no(610_000_002), None);
-        let p = passwd(900_511);
+        let c = parse("# c\nprimary_gid = 15355 # x\nsupplementary_gid=3555\n").unwrap();
+        assert_eq!((c.primary_gid, c.supp_gid), (15355, 3555));
+        for bad in ["", "primary_gid=1", "primary_gid=1\nsupplementary_gid=x", "primary_gid=1\nsupplementary_gid=2\nfoo=3", "primary_gid=1\nsupplementary_gid"] {
+            assert!(parse(bad).is_none(), "{bad:?}");
+        }
+        let p = passwd(900_511, &c);
         assert_eq!((p.name.as_str(), p.uid, p.gid), ("euxfel-p900511", 609_005_112, 15355));
         assert_eq!(p.gecos, "p900511 user");
         assert_eq!(name_to_no(&p.name), Some(900_511));
