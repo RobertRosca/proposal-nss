@@ -29,8 +29,11 @@ UsePAM=0
 EnforcePartLimits=ANY
 SlurmdParameters=config_overrides
 LaunchParameters=disable_send_gids
+GroupUpdateTime=1
 NodeName=$host CPUs=4 Sockets=1 CoresPerSocket=4 ThreadsPerCore=1 RealMemory=512 State=UNKNOWN
 PartitionName=debug Nodes=$host Default=YES MaxTime=5 State=UP
+PartitionName=syn Nodes=$host MaxTime=5 State=UP AllowGroups=exfel_prop_syn
+PartitionName=sup Nodes=$host MaxTime=5 State=UP AllowGroups=exfel
 CONF
 echo CgroupPlugin=disabled > /etc/slurm/cgroup.conf
 slurmctld

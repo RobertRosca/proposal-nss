@@ -61,6 +61,56 @@ fn job(name: &str, who: &[&str], partition: &str, cmd: &str) -> (bool, String) {
     (o.status.success(), text)
 }
 
+const DENIED: &str = "User's group not permitted to use this partition";
+
+// Partition AllowGroups: slurmctld builds the allowed uid set from each group's gr_mem plus a
+// getpwent scan for users whose primary gid matches. The module has no enumeration and no
+// group entries with members, so proposal users are denied everywhere; observed:
+//   sbatch: error: Batch job submission failed: User's group not permitted to use this partition
+// KNOWN ISSUE (proposal-nss-dq4.3): desired behaviour is acceptance, see the ignored tests.
+// GroupUpdateTime=1 in setup-slurm.sh keeps slurmctld's group cache from hiding changes.
+
+#[test]
+fn control_open_partition_accepts_proposal_user() {
+    assert!(job("open", PROP, "debug", "true").0);
+}
+
+#[test]
+fn control_real_user_is_accepted_by_group_partitions() {
+    // otheruser: primary gid exfel (found by slurmctld's primary-gid scan of passwd)
+    assert!(job("other-sup", OTHER, "sup", "true").0);
+    // ...but is not in exfel_prop_syn
+    let (accepted, err) = job("other-syn", OTHER, "syn", "true");
+    assert!(!accepted && err.contains(DENIED), "{err}");
+}
+
+#[test]
+fn allowgroups_primary_group_denies_proposal_user() {
+    let (accepted, err) = job("prop-syn", PROP, "syn", "true");
+    assert!(!accepted && err.contains(DENIED), "{err}");
+}
+
+#[test]
+fn allowgroups_supplementary_group_denies_proposal_user() {
+    // exfel is only a supplementary group (via initgroups), which slurmctld never consults
+    let (accepted, err) = job("prop-sup", PROP, "sup", "true");
+    assert!(!accepted && err.contains(DENIED), "{err}");
+}
+
+#[test]
+#[ignore = "known issue: AllowGroups=exfel_prop_syn denies proposal users (no passwd enumeration)"]
+fn desired_allowgroups_primary_group_accepts_proposal_user() {
+    let (accepted, err) = job("want-syn", PROP, "syn", "true");
+    assert!(accepted, "{err}");
+}
+
+#[test]
+#[ignore = "known issue: AllowGroups=exfel denies proposal users (supplementary group via initgroups only)"]
+fn desired_allowgroups_supplementary_group_accepts_proposal_user() {
+    let (accepted, err) = job("want-sup", PROP, "sup", "true");
+    assert!(accepted, "{err}");
+}
+
 /// With LaunchParameters=disable_send_gids slurmd resolves groups itself (initgroups via NSS).
 #[test]
 fn proposal_user_job_gets_supplementary_groups() {
