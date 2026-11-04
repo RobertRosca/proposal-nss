@@ -28,6 +28,7 @@ MinJobAge=90
 UsePAM=0
 EnforcePartLimits=ANY
 SlurmdParameters=config_overrides
+LaunchParameters=disable_send_gids
 NodeName=$host CPUs=4 Sockets=1 CoresPerSocket=4 ThreadsPerCore=1 RealMemory=512 State=UNKNOWN
 PartitionName=debug Nodes=$host Default=YES MaxTime=5 State=UP
 CONF
