@@ -52,7 +52,7 @@ fn name_to_no(name: &str) -> Option<u32> {
 fn passwd(no: u32) -> Passwd {
     Passwd {
         name: format!("euxfel-p{no:06}"),
-        passwd: "x".into(),
+        passwd: "*".into(), // locked; "x" makes pam_unix look up a shadow entry we don't provide
         uid: id_of(no),
         gid: PRIMARY_GID,
         gecos: format!("p{no:06} user"),
