@@ -43,7 +43,9 @@ id $N | grep -F "uid=$U($N) gid=15355(exfel_prop_syn)" | grep -F "$GID(60001234-
 # the module exposes no groups
 ! getent group 600012352
 ! getent group 60001235-part
-for k in 599999999 610000002 600012341 euxfel-p1234; do ! getent passwd $k || exit 1; done
+# no proposal group -> no user
+for k in 600012352 euxfel-p001235 599999999 610000002 600012341 euxfel-p1234; do ! getent passwd $k || exit 1; done
+! id euxfel-p001235
 
 echo "--- root submits as proposal user; job submits a nested job as itself"
 cat > /tmp/outer.sh <<'JOB'

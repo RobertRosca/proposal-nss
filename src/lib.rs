@@ -19,6 +19,28 @@ fn id_to_no(id: u32) -> Option<u32> {
     Some(d / 10).filter(|n| *n < 1_000_000)
 }
 
+// The proposal group is managed elsewhere (LDAP); a user exists only if it does.
+// We expose no groups, so this lookup cannot recurse into this module.
+fn exists(no: u32) -> bool {
+    let mut grp: libc::group = unsafe { std::mem::zeroed() };
+    let mut res: *mut libc::group = std::ptr::null_mut();
+    let mut buf = vec![0u8; 1024];
+    loop {
+        let rc = unsafe {
+            libc::getgrgid_r(id_of(no), &mut grp, buf.as_mut_ptr().cast(), buf.len(), &mut res)
+        };
+        if rc == libc::ERANGE && buf.len() < 1 << 20 {
+            buf.resize(buf.len() * 2, 0);
+            continue;
+        }
+        return rc == 0 && !res.is_null();
+    }
+}
+
+fn live(no: Option<u32>) -> Option<u32> {
+    no.filter(|n| exists(*n))
+}
+
 fn name_to_no(name: &str) -> Option<u32> {
     let digits = name.strip_prefix("euxfel-p")?;
     if digits.len() != 6 || !digits.bytes().all(|b| b.is_ascii_digit()) {
@@ -56,10 +78,10 @@ impl PasswdHooks for ProposalPasswd {
         Response::Success(vec![])
     }
     fn get_entry_by_uid(uid: uid_t) -> Response<Passwd> {
-        found(id_to_no(uid).map(passwd))
+        found(live(id_to_no(uid)).map(passwd))
     }
     fn get_entry_by_name(name: String) -> Response<Passwd> {
-        found(name_to_no(&name).map(passwd))
+        found(live(name_to_no(&name)).map(passwd))
     }
 }
 
@@ -67,7 +89,7 @@ struct ProposalInitgroups;
 libnss_initgroups_hooks!(proposal, ProposalInitgroups);
 impl InitgroupsHooks for ProposalInitgroups {
     fn get_entries_by_user(user: String) -> Response<Vec<Group>> {
-        found(name_to_no(&user).map(|n| vec![member(id_of(n)), member(SUPP_GID)]))
+        found(live(name_to_no(&user)).map(|n| vec![member(id_of(n)), member(SUPP_GID)]))
     }
 }
 
