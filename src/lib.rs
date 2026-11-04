@@ -9,15 +9,14 @@ use libnss::{libnss_initgroups_hooks, libnss_passwd_hooks};
 const PRIMARY_GID: u32 = 15355;
 const SUPP_GID: u32 = 3555;
 
-const BASE: u32 = 600_000_000;
-
-fn uid_to_no(uid: u32) -> Option<u32> {
-    uid.checked_sub(BASE).filter(|n| *n < 1_000_000)
+// uid == gid of the externally managed proposal group: `60{no:06}2`.
+fn id_of(no: u32) -> u32 {
+    600_000_002 + 10 * no
 }
 
-// GID of the externally managed proposal group: `60{no:06}2`.
-fn gid_of(no: u32) -> u32 {
-    600_000_002 + 10 * no
+fn id_to_no(id: u32) -> Option<u32> {
+    let d = id.checked_sub(600_000_002).filter(|d| d % 10 == 0)?;
+    Some(d / 10).filter(|n| *n < 1_000_000)
 }
 
 fn name_to_no(name: &str) -> Option<u32> {
@@ -32,7 +31,7 @@ fn passwd(no: u32) -> Passwd {
     Passwd {
         name: format!("euxfel-p{no:06}"),
         passwd: "x".into(),
-        uid: BASE + no,
+        uid: id_of(no),
         gid: PRIMARY_GID,
         gecos: format!("p{no:06} user"),
         dir: "/nonexistent".into(), // unspecified, change if homes are needed
@@ -57,7 +56,7 @@ impl PasswdHooks for ProposalPasswd {
         Response::Success(vec![])
     }
     fn get_entry_by_uid(uid: uid_t) -> Response<Passwd> {
-        found(uid_to_no(uid).map(passwd))
+        found(id_to_no(uid).map(passwd))
     }
     fn get_entry_by_name(name: String) -> Response<Passwd> {
         found(name_to_no(&name).map(passwd))
@@ -68,7 +67,7 @@ struct ProposalInitgroups;
 libnss_initgroups_hooks!(proposal, ProposalInitgroups);
 impl InitgroupsHooks for ProposalInitgroups {
     fn get_entries_by_user(user: String) -> Response<Vec<Group>> {
-        found(name_to_no(&user).map(|n| vec![member(gid_of(n)), member(SUPP_GID)]))
+        found(name_to_no(&user).map(|n| vec![member(id_of(n)), member(SUPP_GID)]))
     }
 }
 
@@ -78,15 +77,16 @@ mod tests {
 
     #[test]
     fn mapping() {
-        assert_eq!(uid_to_no(599_999_999), None);
-        assert_eq!(uid_to_no(600_000_000), Some(0));
-        assert_eq!(uid_to_no(600_999_999), Some(999_999));
-        assert_eq!(uid_to_no(601_000_000), None);
-        assert_eq!(gid_of(900_511), 609_005_112);
-        let p = passwd(1234);
-        assert_eq!((p.name.as_str(), p.uid, p.gid), ("euxfel-p001234", 600_001_234, 15355));
-        assert_eq!(p.gecos, "p001234 user");
-        assert_eq!(name_to_no(&p.name), Some(1234));
+        assert_eq!(id_to_no(600_000_001), None);
+        assert_eq!(id_to_no(600_000_002), Some(0));
+        assert_eq!(id_to_no(609_005_112), Some(900_511));
+        assert_eq!(id_to_no(609_005_111), None);
+        assert_eq!(id_to_no(609_999_992), Some(999_999));
+        assert_eq!(id_to_no(610_000_002), None);
+        let p = passwd(900_511);
+        assert_eq!((p.name.as_str(), p.uid, p.gid), ("euxfel-p900511", 609_005_112, 15355));
+        assert_eq!(p.gecos, "p900511 user");
+        assert_eq!(name_to_no(&p.name), Some(900_511));
         for bad in ["euxfel-p1234", "euxfel-p1000000", "euxfel-p+12345", "euxfel-p00123x", "root"] {
             assert_eq!(name_to_no(bad), None, "{bad}");
         }
