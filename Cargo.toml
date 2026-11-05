@@ -3,4 +3,10 @@ name = "proposal-nss"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "nss_proposal"
+crate-type = ["cdylib"]
+
 [dependencies]
+libnss = "0.9"
+libc = "0.2" # required by the libnss_*_hooks! macro expansions

@@ -1,0 +1,52 @@
+experimental = ["setup-scripts", "wrapper-scripts"]
+
+# default profile = host: unit + NSS tests in a user namespace, no root, no Docker.
+# ci profile = the Docker image (see Dockerfile): everything, with real fixtures and Slurm.
+[profile.default]
+default-filter = 'not (binary(sudo) or binary(slurm))'
+
+[scripts.wrapper.userns]
+command = 'test/in-userns.sh'
+
+[scripts.setup.build-module]
+command = 'test/build-module.sh'
+
+# note: `--release` host runs would need a release build of the module; the wrapper fails loudly if absent
+[[profile.default.scripts]]
+filter = 'binary(nss)'
+setup = 'build-module'
+run-wrapper = 'userns'
+
+[scripts.setup.nss-fixtures]
+command = 'test/setup-fixtures.sh'
+
+[scripts.setup.slurm]
+command = 'test/setup-slurm.sh'
+slow-timeout = { period = "45s", terminate-after = 2 }
+leak-timeout = "1s" # the daemons outlive the script
+capture-stdout = true
+capture-stderr = true
+
+# ci inherits default's script rules; the container is already isolated, so override the wrapper
+# (build-module still runs there, harmlessly)
+[scripts.wrapper.passthrough]
+command = 'env'
+
+[[profile.ci.scripts]]
+filter = 'binary(nss)'
+run-wrapper = 'passthrough'
+
+[[profile.ci.scripts]]
+filter = 'binary(nss) or binary(sudo) or binary(slurm)'
+setup = 'nss-fixtures'
+
+[[profile.ci.scripts]]
+filter = 'binary(slurm)'
+setup = 'slurm'
+
+[profile.ci]
+default-filter = 'all()'
+fail-fast = false
+
+[profile.ci.junit]
+path = "junit.xml"
