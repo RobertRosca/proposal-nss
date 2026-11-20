@@ -48,6 +48,12 @@ setup = 'slurm'
 default-filter = 'all()'
 fail-fast = false
 
+# require_prop_dir tests rewrite the shared proposal-nss.conf, hiding proposal users without a dir
+# from every daemon: run them with the whole test pool to themselves.
+[[profile.ci.overrides]]
+filter = 'binary(slurm) and test(/^require_prop_dir_/)'
+threads-required = 'num-cpus'
+
 [profile.ci.junit]
 path = "junit.xml"
 
