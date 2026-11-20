@@ -95,3 +95,12 @@ Leave it `false` on hosts without the tree (head and login nodes). With it set t
 user vanishes, so slurmctld and `sbatch` reject all jobs and the `AllowGroups` fallback above
 fails. On a host that has the option set, an unmounted exp tree hides all proposal users.
 nscd's negative cache (default 20 s for passwd) delays a new proposal directory becoming usable.
+
+Observed with Slurm 24.11.5 (tests in `tests/slurm.rs`, `require_prop_dir_*`):
+
+- Directory missing at submit: `sbatch --uid` fails with `Invalid --uid specification` when
+  submitting from a host that has the option set; the prolog never runs, so no `/nonexistent` is created.
+- Directory missing at launch (or vanishes while the job is queued): slurmd cannot resolve the user,
+  slurmctld requeues the job and holds it (`Reason=launch_failed_requeued_held`); the node stays idle.
+  A held job does not run again by itself, even once the directory is back: `scontrol release <id>` it,
+  and it starts once the requeue delay has passed (`BeginTime`, `AuthInfo=cred_expire` + 1 s, default 121 s).
