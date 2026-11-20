@@ -56,7 +56,7 @@ each new Slurm release. `AllowAccounts` is the alternative if the access semanti
 | File | Notes |
 |------|-------|
 | `/usr/lib64/libnss_proposal.so.2` | The NSS module. |
-| `/etc/proposal-nss.conf` | `%config(noreplace)`. Keys `primary_gid` and `supplementary_gid`, both required; optional `exp_dir` (default `/gpfs/exfel/exp`, see "Home directory"). Invalid or missing file means the module exposes no users. |
+| `/etc/proposal-nss.conf` | `%config(noreplace)`. Keys `primary_gid` and `supplementary_gid`, both required; optional `exp_dir` (default `/gpfs/exfel/exp`, see "Home directory") and `require_prop_dir` (default `false`, see "Require proposal directory"). Invalid or missing file means the module exposes no users. |
 | `/etc/sudoers.d/proposal-spawner` | `%config(noreplace)`, mode 0440. Validate with `visudo -cf` before deploying a modified copy. |
 
 ## Puppet sketch
@@ -81,4 +81,17 @@ encodes the proposal number, so the module scans `{exp_dir}/*/*/p{no:06}` on eve
 (no cache; new proposals show up at once). If several proposal directories match, the
 lexicographically smallest path wins. If none match (or `exp_dir` is unreadable, e.g. GPFS not
 mounted) `pw_dir` is `/nonexistent`; the user itself stays visible, since existence is decided by
-the proposal group. The module never creates the directory.
+the proposal group (unless `require_prop_dir` is set). The module never creates the directory.
+
+### Require proposal directory
+
+Set `require_prop_dir = true` in `/etc/proposal-nss.conf` on hosts that mount the exp tree (the
+allocation nodes). A proposal user is then visible, to passwd and initgroups lookups alike, only
+while `{exp_dir}/*/*/p{no:06}` exists, so `sudo -u` and job launch fail for a proposal without a
+directory and `pw_dir` is never `/nonexistent`. Only that directory is required; the
+`scratch/.exfl_prop_syn-home` home is created by `mkhomedir_helper`.
+
+Leave it `false` on hosts without the tree (head and login nodes). With it set there, every proposal
+user vanishes, so slurmctld and `sbatch` reject all jobs and the `AllowGroups` fallback above
+fails. On a host that has the option set, an unmounted exp tree hides all proposal users.
+nscd's negative cache (default 20 s for passwd) delays a new proposal directory becoming usable.
