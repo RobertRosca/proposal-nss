@@ -67,7 +67,9 @@ const DENIED: &str = "User's group not permitted to use this partition";
 // getpwent scan for users whose primary gid matches. The module has no enumeration and no
 // group entries with members, so proposal users are denied everywhere; observed:
 //   sbatch: error: Batch job submission failed: User's group not permitted to use this partition
-// KNOWN ISSUE (proposal-nss-dq4.3): desired behaviour is acceptance, see the ignored tests.
+// Resolution (proposal-nss-dq4.8): append exfel_prop_syn to a populated AllowGroups, see
+// allowgroups_real_plus_synthetic_group_accepts_proposal_user and docs/deployment.md. The
+// single-group cases below stay denied by design.
 // GroupUpdateTime=1 in setup-slurm.sh keeps slurmctld's group cache from hiding changes.
 
 #[test]
@@ -98,14 +100,14 @@ fn allowgroups_supplementary_group_denies_proposal_user() {
 }
 
 #[test]
-#[ignore = "still a known issue (dq4.3; AllowAccounts is the workaround): AllowGroups=exfel_prop_syn denies proposal users (no passwd enumeration)"]
+#[ignore = "slurmctld limitation (dq4.8): AllowGroups=exfel_prop_syn alone denies (empty allowed-uid list); append it to a populated AllowGroups instead"]
 fn desired_allowgroups_primary_group_accepts_proposal_user() {
     let (accepted, err) = job("want-syn", PROP, "syn", "true");
     assert!(accepted, "{err}");
 }
 
 #[test]
-#[ignore = "still a known issue (dq4.3; AllowAccounts is the workaround): AllowGroups=exfel denies proposal users (supplementary group via initgroups only)"]
+#[ignore = "slurmctld limitation (dq4.8): AllowGroups=exfel denies (supplementary groups are never consulted); append exfel_prop_syn instead"]
 fn desired_allowgroups_supplementary_group_accepts_proposal_user() {
     let (accepted, err) = job("want-sup", PROP, "sup", "true");
     assert!(accepted, "{err}");
