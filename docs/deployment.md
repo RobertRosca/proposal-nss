@@ -27,6 +27,30 @@ without `sss` would strip LDAP users' groups.
 If `/etc/nsswitch.conf` is owned by another Puppet module (e.g. `ldap::client`), make the
 change there; a separate resource editing the file would be overwritten.
 
+## Slurm partitions with AllowGroups
+
+Proposal users are denied by `AllowGroups=exfel_prop_syn` or `AllowGroups=exfel` on their own.
+slurmctld builds its allowed-uid list from group members and a passwd enumeration, neither of
+which the module provides, and it never consults supplementary groups.
+
+Append `exfel_prop_syn` to the existing `AllowGroups` of every partition proposal users must reach
+(`upex`, `exfel`), keeping the current groups:
+
+```
+PartitionName=upex ... AllowGroups=<existing groups>,exfel_prop_syn
+```
+
+This works through slurmctld's fallback that compares the user's primary group name with
+`AllowGroups` (`validate_group` in `partition_mgr.c`, identical in 24.11.5 and 25.11.5). It needs:
+
+- at least one other listed group that resolves with members on the slurmctld host
+  (`getent group <name>` there; an empty allowed-uid list denies immediately);
+- `getent group exfel_prop_syn` resolving on the slurmctld host, so the passwd gid maps to a name.
+
+`exfel_prop_syn` alone in `AllowGroups` always denies. The fallback is undocumented behaviour;
+re-run `tests/slurm.rs` (`allowgroups_real_plus_synthetic_group_accepts_proposal_user`) against
+each new Slurm release. `AllowAccounts` is the alternative if the access semantics may change.
+
 ## Installed by the package (do not template, or use `noreplace`-safe overrides)
 
 | File | Notes |
