@@ -25,6 +25,10 @@ exp_dir = {}
 ", root.display())).unwrap();
         Self(root, old)
     }
+    fn require(&self) {
+        let cur = std::fs::read_to_string(CONF).unwrap();
+        std::fs::write(CONF, format!("{cur}require_prop_dir = true\n")).unwrap();
+    }
     fn home(&self, rel: &str) -> String {
         format!("{}/{rel}/scratch/{HOME}", self.0.display())
     }
@@ -88,10 +92,44 @@ fn multiple_matches_pick_smallest_path() {
 }
 
 #[test]
-fn missing_proposal_dir_falls_back_but_user_stays_visible() {
+fn missing_proposal_dir_falls_back_but_user_stays_visible_by_default() {
     let t = FakeExp::new("missing", &["FXE/202230/p001235"]);
     assert_eq!(dir_of(N), "/nonexistent");
     drop(t);
     // exp_dir absent (GPFS not mounted): same fallback
     assert_eq!(dir_of(U), "/nonexistent");
+}
+
+#[test]
+fn require_prop_dir_hides_user_without_proposal_dir() {
+    let t = FakeExp::new("req-missing", &["FXE/202230/p001235"]);
+    t.require();
+    for k in [U, N] {
+        fails("getent", &["passwd", k]);
+    }
+    fails("id", &[N]);
+}
+
+#[test]
+fn require_prop_dir_hides_user_when_exp_tree_is_empty() {
+    let t = FakeExp::new("req-empty", &[]);
+    t.require();
+    fails("getent", &["passwd", N]);
+}
+
+#[test]
+fn require_prop_dir_keeps_user_with_proposal_dir() {
+    let t = FakeExp::new("req-present", &["FXE/202230/p001234"]);
+    t.require();
+    for k in [U, N] {
+        assert_eq!(dir_of(k), t.home("FXE/202230/p001234"));
+    }
+    assert!(ok("id", &[N]).contains("3555(exfel)"));
+}
+
+#[test]
+fn require_prop_dir_still_needs_proposal_group() {
+    let t = FakeExp::new("req-nogroup", &["FXE/202230/p001235"]);
+    t.require();
+    fails("getent", &["passwd", "euxfel-p001235"]);
 }
