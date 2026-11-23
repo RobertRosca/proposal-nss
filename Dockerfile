@@ -5,14 +5,9 @@
 
 ARG RUST_IMAGE=rust:1-trixie
 
-# Stage 1: nextest binary, built once and cached independently of the source tree.
-FROM ${RUST_IMAGE} AS nextest
-ARG NEXTEST_VERSION=0.9.151
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    cargo install --locked cargo-nextest --version "${NEXTEST_VERSION}"
-
-# Stage 2: system dependencies, fixture users and groups.
+# Stage 1: system dependencies, nextest, fixture users and groups.
 FROM ${RUST_IMAGE} AS base
+ARG NEXTEST_VERSION=0.9.151
 # Keep downloaded .debs so the apt cache mounts are useful.
 RUN rm -f /etc/apt/apt.conf.d/docker-clean \
  && echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache
@@ -28,9 +23,10 @@ useradd -M -u 55635 -g 3555 xdamnprd
 useradd -M -u 55636 -g 3555 otheruser
 useradd -M -u 55637 -g 3555 outsider
 EOT
-COPY --from=nextest /usr/local/cargo/bin/cargo-nextest /usr/local/cargo/bin/
+# prebuilt x86_64 glibc binary; use `linux-arm` on aarch64 hosts
+RUN curl -LsSf "https://get.nexte.st/${NEXTEST_VERSION}/linux" | tar zxf - -C /usr/local/cargo/bin
 
-# Stage 3: build the module and test binaries, install the module and sudoers.
+# Stage 2: build the module and test binaries, install the module and sudoers.
 FROM base AS test
 WORKDIR /src
 COPY . .
