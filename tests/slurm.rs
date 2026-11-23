@@ -1,4 +1,4 @@
-// Needs a running single-node Slurm; see test/entrypoint.sh.
+// Needs a running single-node Slurm; see Dockerfile and .config/nextest.toml.
 mod common;
 use common::{ok, require_prop_dir, run};
 use std::ffi::OsStr;

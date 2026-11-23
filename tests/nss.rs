@@ -1,4 +1,4 @@
-// Needs the module installed in nsswitch plus the external group fixtures; see test/entrypoint.sh.
+// Needs the module installed in nsswitch plus the external group fixtures; see test/in-userns.sh and Dockerfile.
 mod common;
 use common::{fails, ok};
 
