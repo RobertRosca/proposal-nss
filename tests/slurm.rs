@@ -6,6 +6,14 @@ use std::fs;
 const U: &str = "600012342";
 const N: &str = "euxfel-p001234";
 
+/// Polls `f` once a second for up to `secs` seconds; true as soon as it returns true.
+fn wait(secs: u32, mut f: impl FnMut() -> bool) -> bool {
+    (0..secs).any(|_| f() || {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        false
+    })
+}
+
 #[test]
 fn proposal_user_job_submits_nested_job_as_itself() {
     let d = "/tmp/slurm-nested";
@@ -31,13 +39,10 @@ fn proposal_user_job_submits_nested_job_as_itself() {
     let outer = fs::read_to_string(format!("{d}/outer.out")).unwrap();
     // select/linear gives the outer job the whole node, so the inner job only runs once it ends.
     let mut inner = String::new();
-    for _ in 0..30 {
+    wait(30, || {
         inner = fs::read_to_string(format!("{d}/inner.out")).unwrap();
-        if !inner.is_empty() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_secs(1));
-    }
+        !inner.is_empty()
+    });
     assert!(outer.contains(&format!("outer uid={U} user={N}")), "{outer}");
     assert!(outer.contains(&format!("UserId={N}({U})")), "{outer}");
     assert!(inner.contains(&format!("inner uid={U} user={N}")), "{inner}");
@@ -169,13 +174,10 @@ fn accounting_partition_qos_limit_applies_per_proposal_user() {
     // %T state, %r reason
     let state = |id: &str| ok("squeue", &["-h", "-j", id, "-o", "%T %r"]).trim().to_string();
     let mut s = (String::new(), String::new(), String::new());
-    for _ in 0..90 {
+    wait(90, || {
         s = (state(&a1), state(&a2), state(&b1));
-        if s.0.starts_with("RUNNING") && s.2.starts_with("RUNNING") && s.1.contains("QOSMaxJobsPerUserLimit") {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_secs(1));
-    }
+        s.0.starts_with("RUNNING") && s.2.starts_with("RUNNING") && s.1.contains("QOSMaxJobsPerUserLimit")
+    });
     ok("scancel", &[&a1, &a2, &b1]);
     assert!(s.0.starts_with("RUNNING"), "first job of 1242: {s:?}");
     assert!(s.1.starts_with("PENDING") && s.1.contains("QOSMaxJobsPerUserLimit"), "second job of 1242: {s:?}");
@@ -240,26 +242,13 @@ fn clear(n: u8) {
 /// The epilog finishes after the job; the node must settle on idle, never drain.
 fn node_state() -> String {
     let mut s = String::new();
-    for _ in 0..30 {
+    wait(30, || {
         let o = ok("sinfo", &["-h", "-N", "-o", "%T"]); // one line per partition
         s = o.lines().next().unwrap().to_string();
         assert!(o.lines().all(|l| l == s), "{o}");
-        if s == "idle" || s.starts_with("drain") {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_secs(1));
-    }
+        s == "idle" || s.starts_with("drain")
+    });
     s
-}
-
-fn wait_gone(path: &str) -> bool {
-    for _ in 0..30 {
-        if !std::path::Path::new(path).exists() {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_secs(1));
-    }
-    false
 }
 
 #[test]
@@ -370,13 +359,10 @@ fn require_prop_dir_holds_job_when_dir_vanishes_before_launch() {
     let g = RequirePropDir::new();
     fs::remove_dir_all("/fake-exp/FXE/202201/p001237").unwrap();
     let mut reason = String::new();
-    for _ in 0..60 {
+    wait(60, || {
         reason = job_field(&id, "Reason");
-        if reason == "launch_failed_requeued_held" {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_secs(1));
-    }
+        reason == "launch_failed_requeued_held"
+    });
     assert_eq!(reason, "launch_failed_requeued_held", "slurmd log:\n{}", fs::read_to_string("/var/log/slurm/slurmd.log").unwrap_or_default());
     assert_eq!(job_field(&id, "JobState"), "PENDING");
     assert_eq!(job_field(&id, "Restarts"), "1");
@@ -392,13 +378,10 @@ fn require_prop_dir_holds_job_when_dir_vanishes_before_launch() {
     // the launch-failure requeue also defers the job (Reason=BeginTime); start it now
     ok("scontrol", &["update", &format!("JobId={id}"), "StartTime=now"]);
     let mut state = String::new();
-    for _ in 0..60 {
+    wait(60, || {
         state = job_field(&id, "JobState");
-        if state == "COMPLETED" {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_secs(1));
-    }
+        state == "COMPLETED"
+    });
     assert_eq!(state, "COMPLETED", "{}", job_field(&id, "Reason"));
     assert!(fs::read_to_string(out).unwrap().contains("ran as euxfel-p001237"));
     assert_eq!(node_state(), "idle");
@@ -412,16 +395,10 @@ fn prolog_epilog_cleans_synthetic_uid_files_and_processes() {
     clear(7);
     assert!(job("epilog", HAS_DIR, "debug", cmd).0);
     for f in ["/tmp/epilog-junk", "/var/tmp/epilog-junk", "/dev/shm/epilog-junk"] {
-        assert!(wait_gone(f), "{f} survived; epilog log:\n{}", log("epilog", 7));
+        assert!(wait(30, || !std::path::Path::new(f).exists()), "{f} survived; epilog log:\n{}", log("epilog", 7));
     }
-    let mut alive = true;
-    for _ in 0..30 {
-        alive = run("sh", &["-c", "ps -u 600012372 -o stat= | grep -qv ^Z"]).0 /* zombies (unreaped by PID 1) do not count */;
-        if !alive {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_secs(1));
-    }
-    assert!(!alive, "orphan sleep survived; epilog log:\n{}", log("epilog", 7));
+    // zombies (unreaped by PID 1) do not count
+    let gone = wait(30, || !run("sh", &["-c", "ps -u 600012372 -o stat= | grep -qv ^Z"]).0);
+    assert!(gone, "orphan sleep survived; epilog log:\n{}", log("epilog", 7));
     assert_eq!(node_state(), "idle");
 }
