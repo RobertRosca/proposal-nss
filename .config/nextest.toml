@@ -8,8 +8,10 @@ default-filter = 'not (binary(sudo) or binary(slurm))'
 [scripts.wrapper.userns]
 command = 'test/in-userns.sh'
 
+# cargo only builds the cdylib for `cargo build`, not for tests. The nss tests load this test-conf
+# build (conf path from PROPOSAL_NSS_CONF); its own target dir keeps the feature out of regular builds.
 [scripts.setup.build-module]
-command = 'test/build-module.sh'
+command = 'cargo build --lib --features test-conf --target-dir target/test-conf'
 
 [[profile.default.scripts]]
 filter = 'binary(nss)'
