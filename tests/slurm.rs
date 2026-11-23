@@ -1,6 +1,7 @@
 // Needs a running single-node Slurm; see test/entrypoint.sh.
 mod common;
 use common::{ok, run};
+use std::ffi::OsStr;
 use std::fs;
 
 const U: &str = "600012342";
@@ -48,11 +49,10 @@ fn proposal_user_job_submits_nested_job_as_itself() {
     assert!(inner.contains(&format!("inner uid={U} user={N}")), "{inner}");
 }
 
-const PROP: &[&str] = &["--uid", U, "--gid", "15355"];
 const OTHER: &[&str] = &["--uid", "55636", "--gid", "3555"];// real user, primary group exfel (3555)
 
 /// Submits `--wrap cmd` as `who` to `partition`; returns (accepted, job output or sbatch stderr).
-fn job(name: &str, who: &[&str], partition: &str, cmd: &str) -> (bool, String) {
+fn job(name: &str, who: &[impl AsRef<OsStr>], partition: &str, cmd: &str) -> (bool, String) {
     let out = format!("/tmp/slurm-{name}.out");
     fs::write(&out, "").unwrap();
     ok("chmod", &["666", &out]);
@@ -79,7 +79,7 @@ const DENIED: &str = "User's group not permitted to use this partition";
 
 #[test]
 fn control_open_partition_accepts_proposal_user() {
-    assert!(job("open", PROP, "debug", "true").0);
+    assert!(job("open", &prop(1234), "debug", "true").0);
 }
 
 #[test]
@@ -93,21 +93,21 @@ fn control_real_user_is_accepted_by_group_partitions() {
 
 #[test]
 fn allowgroups_primary_group_denies_proposal_user() {
-    let (accepted, err) = job("prop-syn", PROP, "syn", "true");
+    let (accepted, err) = job("prop-syn", &prop(1234), "syn", "true");
     assert!(!accepted && err.contains(DENIED), "{err}");
 }
 
 #[test]
 fn allowgroups_supplementary_group_denies_proposal_user() {
     // exfel is only a supplementary group (via initgroups), which slurmctld never consults
-    let (accepted, err) = job("prop-sup", PROP, "sup", "true");
+    let (accepted, err) = job("prop-sup", &prop(1234), "sup", "true");
     assert!(!accepted && err.contains(DENIED), "{err}");
 }
 
 /// With LaunchParameters=disable_send_gids slurmd resolves groups itself (initgroups via NSS).
 #[test]
 fn proposal_user_job_gets_supplementary_groups() {
-    let (accepted, out) = job("groups", PROP, "debug", "id -G; getent initgroups euxfel-p001234");
+    let (accepted, out) = job("groups", &prop(1234), "debug", "id -G; getent initgroups euxfel-p001234");
     assert!(accepted, "{out}");
     // primary exfel_prop_syn, supplementary exfel, plus the proposal group 60001234-part
     assert!(out.starts_with("15355 3555 600012342\n"), "{out}");
@@ -131,26 +131,22 @@ fn sacctmgr_add_user(no: u32, account: &str) {
     ok("sacctmgr", &["-i", "add", "user", &format!("name=euxfel-p{no:06}"), &format!("account={account}")]);
 }
 
-fn who(v: &[String]) -> Vec<&str> {
-    v.iter().map(String::as_str).collect()
-}
-
 const NO_ASSOC: &str = "Invalid account or account/partition combination specified";
 
 #[test]
 fn accounting_proposal_user_without_association_is_rejected() {
     // observed: sbatch: error: Batch job submission failed: Invalid account or account/partition combination specified
-    let (accepted, err) = job("noassoc", &who(&prop(1240)), "debug", "true");
+    let (accepted, err) = job("noassoc", &prop(1240), "debug", "true");
     assert!(!accepted && err.contains(NO_ASSOC), "{err}");
 }
 
 #[test]
 fn accounting_association_makes_proposal_user_accepted_at_once() {
-    let (accepted, _) = job("pre-assoc", &who(&prop(1241)), "debug", "true");
+    let (accepted, _) = job("pre-assoc", &prop(1241), "debug", "true");
     assert!(!accepted);
     sacctmgr_add_user(1241, "exfel");
     // observed: slurmdbd pushes the new association to slurmctld within ~15 ms, no retry needed
-    let (accepted, err) = job("post-assoc", &who(&prop(1241)), "debug", "true");
+    let (accepted, err) = job("post-assoc", &prop(1241), "debug", "true");
     assert!(accepted, "{err}");
 }
 
@@ -163,7 +159,7 @@ fn accounting_partition_qos_limit_applies_per_proposal_user() {
     let submit = |no: u32| -> String {
         let o = std::process::Command::new("sbatch")
             .args(["--parsable", "--chdir", "/tmp", "--output", "/dev/null", "--partition", "lim"])
-            .args(who(&prop(no)))
+            .args(prop(no))
             .args(["--wrap", "sleep 300"])
             .output()
             .unwrap();
@@ -188,7 +184,7 @@ fn accounting_partition_qos_limit_applies_per_proposal_user() {
 
 #[test]
 fn allowaccounts_accepts_associated_proposal_user_and_rejects_other_accounts() {
-    let (accepted, err) = job("acct-prop", &who(&prop(1234)), "acct", "true");
+    let (accepted, err) = job("acct-prop", &prop(1234), "acct", "true");
     assert!(accepted, "{err}");
     let (accepted, err) = job("acct-other", OTHER, "acct", "true");
     assert!(accepted, "{err}");
@@ -198,7 +194,7 @@ fn allowaccounts_accepts_associated_proposal_user_and_rejects_other_accounts() {
     eprintln!("outsider rejected: {err}");
     // proposal user associated with a different account is rejected the same way
     sacctmgr_add_user(1244, "other");
-    let (accepted, err) = job("acct-prop-other", &who(&prop(1244)), "acct", "true");
+    let (accepted, err) = job("acct-prop-other", &prop(1244), "acct", "true");
     assert!(!accepted, "{err}");
 }
 
@@ -215,7 +211,7 @@ fn allowaccounts_accepts_associated_proposal_user_and_rejects_other_accounts() {
 /// one other listed group resolves to a non-empty member list; supplementary groups are never used.
 #[test]
 fn allowgroups_real_plus_synthetic_group_accepts_proposal_user() {
-    let (accepted, err) = job("prop-both", &who(&prop(1234)), "both", "true");
+    let (accepted, err) = job("prop-both", &prop(1234), "both", "true");
     assert!(accepted, "{err}");
     assert!(job("other-both", OTHER, "both", "true").0);
 }
@@ -225,8 +221,6 @@ fn allowgroups_real_plus_synthetic_group_accepts_proposal_user() {
 // Exp tree (outside /tmp: the epilog rm -rf deletes the user's files there): /fake-exp (exp_dir in /etc/proposal-nss.conf); p001237 exists there, p001238 does not.
 
 const EXP: &str = "/fake-exp/FXE/202201/p001237";
-const HAS_DIR: &[&str] = &["--uid", "600012372", "--gid", "15355"];
-const NO_DIR: &[&str] = &["--uid", "600012382", "--gid", "15355"];
 
 /// Trace of the prolog/epilog for `euxfel-p00123{n}` (n=7 or 8); `clear` it before the job under test.
 fn log(f: &str, n: u8) -> String {
@@ -255,7 +249,7 @@ fn node_state() -> String {
 fn prolog_runs_for_proposal_user_and_node_stays_idle() {
     fs::create_dir_all(format!("{EXP}/scratch")).unwrap();
     clear(7);
-    let (accepted, out) = job("prolog-ok", HAS_DIR, "debug", "echo ran as $(id -un)");
+    let (accepted, out) = job("prolog-ok", &prop(1237), "debug", "echo ran as $(id -un)");
     assert!(accepted && out.contains("ran as euxfel-p001237"), "{out}");
     assert_eq!(node_state(), "idle", "prolog log:\n{}\nepilog log:\n{}", log("prolog", 7), log("epilog", 7));
     let p = log("prolog", 7);
@@ -271,7 +265,7 @@ fn prolog_mkhomedir_creates_pw_dir_under_proposal_scratch() {
     let home = format!("{EXP}/scratch/.exfl_prop_syn-home");
     let _ = fs::remove_dir_all(&home);
     clear(7);
-    assert!(job("prolog-home", HAS_DIR, "debug", "true").0);
+    assert!(job("prolog-home", &prop(1237), "debug", "true").0);
     assert_eq!(node_state(), "idle");
     assert!(std::path::Path::new(&home).is_dir(), "{home} missing; prolog log:\n{}", log("prolog", 7));
     assert!(!std::path::Path::new("/home/euxfel-p001237").exists());
@@ -282,7 +276,7 @@ fn prolog_mkhomedir_creates_pw_dir_under_proposal_scratch() {
 fn prolog_mkhomedir_creates_nonexistent_junk_dir_without_proposal_dir() {
     let _ = fs::remove_dir_all("/nonexistent");
     clear(8);
-    assert!(job("prolog-junk", NO_DIR, "debug", "true").0);
+    assert!(job("prolog-junk", &prop(1238), "debug", "true").0);
     assert_eq!(node_state(), "idle", "{}", log("prolog", 8));
     assert!(std::path::Path::new("/nonexistent").exists(), "prolog log:\n{}", log("prolog", 8));
 }
@@ -315,7 +309,7 @@ fn require_prop_dir_rejects_job_for_proposal_without_dir() {
     let _g = RequirePropDir::new();
     let _ = fs::remove_dir_all("/nonexistent");
     clear(8);
-    let (accepted, err) = job("req-nodir", NO_DIR, "debug", "true");
+    let (accepted, err) = job("req-nodir", &prop(1238), "debug", "true");
     assert!(!accepted && err.contains("Invalid --uid specification"), "{err}");
     assert!(!std::path::Path::new("/nonexistent").exists());
     assert!(log("prolog", 8).is_empty(), "{}", log("prolog", 8));
@@ -329,7 +323,7 @@ fn require_prop_dir_accepts_job_for_proposal_with_dir() {
     let home = format!("{EXP}/scratch/.exfl_prop_syn-home");
     let _ = fs::remove_dir_all(&home);
     clear(7);
-    let (accepted, out) = job("req-dir", HAS_DIR, "debug", "echo ran as $(id -un)");
+    let (accepted, out) = job("req-dir", &prop(1237), "debug", "echo ran as $(id -un)");
     assert!(accepted && out.contains("ran as euxfel-p001237"), "{out}");
     assert_eq!(node_state(), "idle", "{}", log("prolog", 7));
     assert!(std::path::Path::new(&home).is_dir(), "{home} missing");
@@ -353,7 +347,7 @@ fn require_prop_dir_holds_job_when_dir_vanishes_before_launch() {
     let out = "/tmp/slurm-req-held.out";
     fs::write(out, "").unwrap();
     ok("chmod", &["666", out]);
-    let id = ok("sbatch", &["--parsable", "--chdir", "/tmp", "--output", out, "--uid", "600012372", "--gid", "15355", "--wrap", "echo ran as $(id -un)"]);
+    let id = ok("sbatch", &["--parsable", "--chdir", "/tmp", "--output", out, "--uid", &uid(1237), "--gid", "15355", "--wrap", "echo ran as $(id -un)"]);
     let id = id.trim().to_string();
 
     let g = RequirePropDir::new();
@@ -393,7 +387,7 @@ fn prolog_epilog_cleans_synthetic_uid_files_and_processes() {
     let cmd = "touch /tmp/epilog-junk /var/tmp/epilog-junk /dev/shm/epilog-junk; \
                setsid nohup sleep 4242 >/dev/null 2>&1 & sleep 1";
     clear(7);
-    assert!(job("epilog", HAS_DIR, "debug", cmd).0);
+    assert!(job("epilog", &prop(1237), "debug", cmd).0);
     for f in ["/tmp/epilog-junk", "/var/tmp/epilog-junk", "/dev/shm/epilog-junk"] {
         assert!(wait(30, || !std::path::Path::new(f).exists()), "{f} survived; epilog log:\n{}", log("epilog", 7));
     }
