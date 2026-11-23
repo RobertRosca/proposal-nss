@@ -1,6 +1,6 @@
 // Needs a running single-node Slurm; see test/entrypoint.sh.
 mod common;
-use common::{ok, run};
+use common::{ok, require_prop_dir, run};
 use std::ffi::OsStr;
 use std::fs;
 
@@ -281,32 +281,15 @@ fn prolog_mkhomedir_creates_nonexistent_junk_dir_without_proposal_dir() {
     assert!(std::path::Path::new("/nonexistent").exists(), "prolog log:\n{}", log("prolog", 8));
 }
 
-/// Switches the module to `require_prop_dir = true` (the fixture conf turns it off) for the guard's lifetime. The single container is
-/// head and compute node at once, so every daemon sees the setting; the tests using this are
-/// exclusive (`threads-required` in .config/nextest.toml) because proposal users without a dir vanish.
-struct RequirePropDir(String);
-
-const CONF: &str = "/etc/proposal-nss.conf";
-
-impl RequirePropDir {
-    fn new() -> Self {
-        let old = fs::read_to_string(CONF).unwrap();
-        common::write_atomic(CONF, format!("{old}\nrequire_prop_dir = true\n")).unwrap();
-        Self(old)
-    }
-}
-
-impl Drop for RequirePropDir {
-    fn drop(&mut self) {
-        common::write_atomic(CONF, &self.0).unwrap();
-    }
-}
+// require_prop_dir() switches the module on (the fixture conf turns it off) for the guard's lifetime. The single container is head and
+// compute node at once, so every daemon sees the setting; the tests using it are exclusive
+// (`threads-required` in .config/nextest.toml) because proposal users without a dir vanish.
 
 /// With require_prop_dir the proposal user does not resolve without its dir: sbatch rejects the job
 /// at submit time and the prolog never runs, so no junk /nonexistent.
 #[test]
 fn require_prop_dir_rejects_job_for_proposal_without_dir() {
-    let _g = RequirePropDir::new();
+    let _g = require_prop_dir();
     let _ = fs::remove_dir_all("/nonexistent");
     clear(8);
     let (accepted, err) = job("req-nodir", &prop(1238), "debug", "true");
@@ -318,7 +301,7 @@ fn require_prop_dir_rejects_job_for_proposal_without_dir() {
 
 #[test]
 fn require_prop_dir_accepts_job_for_proposal_with_dir() {
-    let _g = RequirePropDir::new();
+    let _g = require_prop_dir();
     fs::create_dir_all(format!("{EXP}/scratch")).unwrap();
     let home = format!("{EXP}/scratch/.exfl_prop_syn-home");
     let _ = fs::remove_dir_all(&home);
@@ -350,7 +333,7 @@ fn require_prop_dir_holds_job_when_dir_vanishes_before_launch() {
     let id = ok("sbatch", &["--parsable", "--chdir", "/tmp", "--output", out, "--uid", &uid(1237), "--gid", "15355", "--wrap", "echo ran as $(id -un)"]);
     let id = id.trim().to_string();
 
-    let g = RequirePropDir::new();
+    let g = require_prop_dir();
     fs::remove_dir_all("/fake-exp/FXE/202201/p001237").unwrap();
     let mut reason = String::new();
     wait(60, || {

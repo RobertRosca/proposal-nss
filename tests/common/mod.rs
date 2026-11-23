@@ -27,3 +27,26 @@ pub fn write_atomic(path: &str, content: impl AsRef<[u8]>) -> std::io::Result<()
     std::fs::write(&tmp, content)?;
     std::fs::rename(&tmp, path)
 }
+
+const CONF: &str = "/etc/proposal-nss.conf";
+
+/// Appends `line` to /etc/proposal-nss.conf for the guard's lifetime, then restores the file.
+pub struct ConfLine(String);
+
+impl ConfLine {
+    pub fn add(line: &str) -> Self {
+        let old = std::fs::read_to_string(CONF).unwrap();
+        write_atomic(CONF, format!("{old}\n{line}\n")).unwrap();
+        Self(old)
+    }
+}
+
+impl Drop for ConfLine {
+    fn drop(&mut self) {
+        write_atomic(CONF, &self.0).unwrap();
+    }
+}
+
+pub fn require_prop_dir() -> ConfLine {
+    ConfLine::add("require_prop_dir = true")
+}
