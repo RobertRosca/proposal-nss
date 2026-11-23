@@ -99,20 +99,6 @@ fn allowgroups_supplementary_group_denies_proposal_user() {
     assert!(!accepted && err.contains(DENIED), "{err}");
 }
 
-#[test]
-#[ignore = "slurmctld limitation: AllowGroups=exfel_prop_syn alone denies (empty allowed-uid list); append it to a populated AllowGroups instead"]
-fn desired_allowgroups_primary_group_accepts_proposal_user() {
-    let (accepted, err) = job("want-syn", PROP, "syn", "true");
-    assert!(accepted, "{err}");
-}
-
-#[test]
-#[ignore = "slurmctld limitation: AllowGroups=exfel denies (supplementary groups are never consulted); append exfel_prop_syn instead"]
-fn desired_allowgroups_supplementary_group_accepts_proposal_user() {
-    let (accepted, err) = job("want-sup", PROP, "sup", "true");
-    assert!(accepted, "{err}");
-}
-
 /// With LaunchParameters=disable_send_gids slurmd resolves groups itself (initgroups via NSS).
 #[test]
 fn proposal_user_job_gets_supplementary_groups() {
