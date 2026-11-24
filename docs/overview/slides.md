@@ -25,6 +25,8 @@ layout: center
 </v-clicks>
 
 ---
+hide: true
+---
 
 ## Goals
 
