@@ -70,14 +70,6 @@ layout: two-cols-header
 
 </v-clicks>
 
-<v-click>
-
-<p class="text-xs opacity-75">
-<code>exfel_prop_syn</code> marks the synthetic users: sudo matches it as a Runas group (user names don't take wildcards), and slurmctld's <code>AllowGroups</code> check compares the primary group name. Keep it free of real users.
-</p>
-
-</v-click>
-
 ::right::
 
 <v-click>
@@ -94,6 +86,16 @@ This requires:<br><br>
     - Same NSS module on slurmctld and compute nodes
 
 </v-clicks>
+
+::bottom::
+
+<v-click>
+
+<p class="text-xs opacity-75">
+<code>exfel_prop_syn</code> marks the synthetic users: sudo matches it as a Runas group (user names don't take wildcards), and slurmctld's <code>AllowGroups</code> check compares the primary group name. Keep it free of real users.
+</p>
+
+</v-click>
 
 ---
 layout: two-cols-header
