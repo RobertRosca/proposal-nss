@@ -57,7 +57,7 @@ each new Slurm release. `AllowAccounts` is the alternative if the access semanti
 | File | Notes |
 |------|-------|
 | `/usr/lib64/libnss_proposal.so.2` | The NSS module. |
-| `/etc/proposal-nss.conf` | `%config(noreplace)`. Keys `primary_gid` and `supplementary_gid`, both required; optional `exp_dir` (default `/gpfs/exfel/exp`, see "Home directory") and `require_prop_dir` (default `true`, see "Require proposal directory"). Invalid or missing file means the module exposes no users. |
+| `/etc/proposal-nss.conf` | `%config(noreplace)`. Keys `primary_gid` and `supplementary_gid`, both required; optional `exp_dir` (default `/gpfs/exfel/exp`, see "Home directory") and `require_prop_dir` (default `true`, see "Require proposal directory"). Invalid or missing file means the module exposes no users; an unreadable one (e.g. EACCES) makes lookups return UNAVAIL. |
 | `/etc/sudoers.d/proposal-spawner` | `%config(noreplace)`, mode 0440. Validate with `visudo -cf` before deploying a modified copy. |
 
 ## Puppet sketch
@@ -83,6 +83,20 @@ encodes the proposal number, so the module scans `{exp_dir}/*/*/p{no:06}` on eve
 lexicographically smallest path wins. If none match (or `exp_dir` is unreadable, e.g. GPFS not
 mounted) `pw_dir` is `/nonexistent`; the user itself stays visible, since existence is decided by
 the proposal group (only with `require_prop_dir = false`). The module never creates the directory.
+
+### Lookup failures
+
+A failed `getgrgid_r` (sssd/LDAP `EAGAIN`/`EIO`, or `ERANGE` at the 1 MiB cap) returns `TRYAGAIN`, and
+with `require_prop_dir` an I/O error on the exp tree other than `ENOENT` returns `UNAVAIL`, so callers
+see an error and not an authoritative "no such user". passwd lookups set `errno` to `EAGAIN`
+(`TRYAGAIN`) or `EIO` (`UNAVAIL`). A tree scan error counts only when no proposal directory was
+found in any readable subtree. The libnss glue forces `ENOENT` on every non-success initgroups
+result, so there the status is visible to glibc's source chain but not in `errno`.
+
+Limitation: `getgrgid_r` reports the status of the last group service glibc called. With
+`group: files sss systemd proposal` the module has no group functions, so `systemd` is last and
+answers `NOTFOUND`; an `sss` `UNAVAIL` (sssd down or restarting) still gives rc=0 with no result,
+and the module answers `NOTFOUND`. The `TRYAGAIN` mapping only applies when the failure survives to the return code.
 
 ### Require proposal directory
 
