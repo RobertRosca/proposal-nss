@@ -97,15 +97,21 @@ fn exists(no: u32) -> Result<bool, Fail> {
 
 // With `require_prop_dir` (default; hosts that mount the exp tree) the proposal directory must exist
 // too, so nobody can switch to a proposal user without one. Hosts without the tree turn it off.
-fn live(no: Option<u32>, c: &Conf) -> Result<Option<u32>, Fail> {
-    let Some(n) = no else { return Ok(None) };
-    if !exists(n)? {
+// Returns the proposal dirs found, scanned when `require_prop_dir` or `need_dirs` (the caller builds
+// a passwd entry), so the exp tree is read once per lookup.
+fn live(no: u32, c: &Conf, need_dirs: bool) -> Result<Option<Vec<std::path::PathBuf>>, Fail> {
+    if !exists(no)? {
         return Ok(None);
     }
-    if c.require_prop_dir && proposal_dirs(n, &c.exp_dir)?.is_empty() {
-        return Ok(None);
+    if !(c.require_prop_dir || need_dirs) {
+        return Ok(Some(vec![]));
     }
-    Ok(Some(n))
+    match proposal_dirs(no, &c.exp_dir) {
+        Ok(d) if c.require_prop_dir && d.is_empty() => Ok(None),
+        Ok(d) => Ok(Some(d)),
+        Err(e) if c.require_prop_dir => Err(e),
+        Err(_) => Ok(Some(vec![])),
+    }
 }
 
 fn name_to_no(name: &str) -> Option<u32> {
@@ -166,23 +172,21 @@ fn proposal_dirs(no: u32, exp_dir: &str) -> Result<Vec<std::path::PathBuf>, Fail
     if found.is_empty() && err { Err(Fail::Unavail) } else { Ok(found) }
 }
 
-fn home(no: u32, exp_dir: &str) -> String {
-    proposal_dirs(no, exp_dir)
-        .unwrap_or_default()
-        .into_iter()
+fn home(dirs: Vec<std::path::PathBuf>) -> String {
+    dirs.into_iter()
         .min()
         .and_then(|d| d.join("scratch/.exfl_prop_syn-home").to_str().map(String::from))
         .unwrap_or_else(|| "/nonexistent".into())
 }
 
-fn passwd(no: u32, c: &Conf) -> Passwd {
+fn passwd(no: u32, c: &Conf, dirs: Vec<std::path::PathBuf>) -> Passwd {
     Passwd {
         name: format!("euxfel-p{no:06}"),
         passwd: "*".into(), // locked; "x" makes pam_unix look up a shadow entry we don't provide
         uid: id_of(no),
         gid: c.primary_gid,
         gecos: format!("p{no:06} user"),
-        dir: home(no, &c.exp_dir),
+        dir: home(dirs),
         shell: "/sbin/nologin".into(),
     }
 }
@@ -211,11 +215,12 @@ fn found<T>(v: Result<Option<T>, Fail>) -> Response<T> {
     }
 }
 
-// conf, then a live proposal number, then the entry built from both.
-fn lookup<T>(no: impl FnOnce() -> Option<u32>, build: impl FnOnce(u32, &Conf) -> T) -> Response<T> {
+// Cheap id/name check first, so misses and real users never read the conf; then conf, then liveness.
+fn lookup<T>(no: Option<u32>, need_dirs: bool, build: impl FnOnce(u32, &Conf, Vec<std::path::PathBuf>) -> T) -> Response<T> {
     found((|| {
+        let Some(n) = no else { return Ok(None) };
         let Some(c) = conf()? else { return Ok(None) };
-        Ok(live(no(), &c)?.map(|n| build(n, &c)))
+        Ok(live(n, &c, need_dirs)?.map(|d| build(n, &c, d)))
     })())
 }
 
@@ -227,10 +232,10 @@ impl PasswdHooks for ProposalPasswd {
         Response::Success(vec![])
     }
     fn get_entry_by_uid(uid: uid_t) -> Response<Passwd> {
-        lookup(|| id_to_no(uid), passwd)
+        lookup(id_to_no(uid), true, passwd)
     }
     fn get_entry_by_name(name: String) -> Response<Passwd> {
-        lookup(|| name_to_no(&name), passwd)
+        lookup(name_to_no(&name), true, passwd)
     }
 }
 
@@ -238,7 +243,7 @@ struct ProposalInitgroups;
 libnss_initgroups_hooks!(proposal, ProposalInitgroups);
 impl InitgroupsHooks for ProposalInitgroups {
     fn get_entries_by_user(user: String) -> Response<Vec<Group>> {
-        lookup(|| name_to_no(&user), |n, c| vec![member(id_of(n)), member(c.supp_gid)])
+        lookup(name_to_no(&user), false, |n, c, _| vec![member(id_of(n)), member(c.supp_gid)])
     }
 }
 
@@ -266,7 +271,7 @@ mod tests {
         assert!(parse("primary_gid=1\nsupplementary_gid=2\nrequire_prop_dir = true").unwrap().require_prop_dir);
         assert!(!parse("primary_gid=1\nsupplementary_gid=2\nrequire_prop_dir=false").unwrap().require_prop_dir);
         assert!(parse("primary_gid=1\nsupplementary_gid=2\nrequire_prop_dir=yes").is_none());
-        let p = passwd(900_511, &c);
+        let p = passwd(900_511, &c, vec![]);
         assert_eq!((p.name.as_str(), p.uid, p.gid), ("euxfel-p900511", 609_005_112, 15355));
         assert_eq!(p.gecos, "p900511 user");
         assert_eq!(name_to_no(&p.name), Some(900_511));
