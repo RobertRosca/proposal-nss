@@ -22,6 +22,8 @@ groupadd -g 15355 exfel_prop_syn
 useradd -M -u 55635 -g 3555 xdamnprd
 useradd -M -u 55636 -g 3555 otheruser
 useradd -M -u 55637 -g 3555 outsider
+groupadd -g 55600 xdata # owns the exp tree in production (p{no} is 0550 xdata:xdata)
+useradd -M -u 55600 -g 55600 xdata
 EOT
 # prebuilt x86_64 glibc binary; use `linux-arm` on aarch64 hosts
 RUN curl -LsSf "https://get.nexte.st/${NEXTEST_VERSION}/linux" | tar zxf - -C /usr/local/cargo/bin

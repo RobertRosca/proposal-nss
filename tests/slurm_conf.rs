@@ -1,6 +1,6 @@
 // Needs a running single-node Slurm; see Dockerfile and .config/nextest.toml.
 mod common;
-use common::slurm::{clear, job, log, node_state, prop, uid, wait, EXP};
+use common::slurm::{assert_lookup_identical, clear, exp_fixture, job, log, node_state, prop, uid, wait, EXP};
 use common::{ok, require_prop_dir};
 use std::fs;
 
@@ -26,7 +26,7 @@ fn require_prop_dir_rejects_job_for_proposal_without_dir() {
 #[test]
 fn require_prop_dir_accepts_job_for_proposal_with_dir() {
     let _g = require_prop_dir();
-    fs::create_dir_all(format!("{EXP}/scratch")).unwrap();
+    exp_fixture();
     let home = format!("{EXP}/scratch/.exfl_prop_syn-home");
     let _ = fs::remove_dir_all(&home);
     clear(7);
@@ -34,6 +34,12 @@ fn require_prop_dir_accepts_job_for_proposal_with_dir() {
     assert!(accepted && out.contains("ran as euxfel-p001237"), "{out}");
     assert_eq!(node_state(), "idle", "{}", log("prolog", 7));
     assert!(std::path::Path::new(&home).is_dir(), "{home} missing");
+}
+
+#[test]
+fn require_prop_dir_lookup_identical_for_root_slurm_and_non_member() {
+    let _g = require_prop_dir();
+    assert_lookup_identical();
 }
 
 fn job_field(id: &str, key: &str) -> String {
@@ -47,7 +53,7 @@ fn job_field(id: &str, key: &str) -> String {
 /// `scontrol update StartTime=now` (the requeue also sets a BeginTime delay) runs the job.
 #[test]
 fn require_prop_dir_holds_job_when_dir_vanishes_before_launch() {
-    fs::create_dir_all(format!("{EXP}/scratch")).unwrap();
+    exp_fixture();
     clear(7);
     // select/linear: the blocker owns the node, so the proposal job stays pending until it ends
     ok("sbatch", &["--uid", "55636", "--gid", "3555", "--chdir", "/tmp", "--output", "/dev/null", "--wrap", "sleep 8"]);
@@ -71,7 +77,7 @@ fn require_prop_dir_holds_job_when_dir_vanishes_before_launch() {
 
     // recovery: dir and config back, release the hold
     drop(g);
-    fs::create_dir_all(format!("{EXP}/scratch")).unwrap();
+    exp_fixture();
     // slurmd remembers the failed launch of this job id for a while ("already killed, do not
     // launch batch job"): a release straight away fails the job with exit code 1; 25 s worked, 0 s did not
     std::thread::sleep(std::time::Duration::from_secs(30));
