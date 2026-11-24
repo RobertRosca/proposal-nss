@@ -55,6 +55,8 @@ each new Slurm release. `AllowAccounts` is the alternative if the access semanti
 Production runs `GroupUpdateTime=600` with `GroupUpdateForce=1`, so `AllowGroups` changes for proposal
 users can take up to 10 minutes to apply.
 
+Proposal users also need a Slurm association, see [association-provisioning.md](association-provisioning.md).
+
 ## Installed by the package (do not template, or use `noreplace`-safe overrides)
 
 | File | Notes |
