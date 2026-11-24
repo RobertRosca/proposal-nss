@@ -70,6 +70,14 @@ layout: two-cols-header
 
 </v-clicks>
 
+<v-click>
+
+<p class="text-xs opacity-75">
+<code>exfel_prop_syn</code> marks the synthetic users: sudo matches it as a Runas group (user names don't take wildcards), and slurmctld's <code>AllowGroups</code> check compares the primary group name. Keep it free of real users.
+</p>
+
+</v-click>
+
 ::right::
 
 <v-click>
@@ -144,6 +152,45 @@ supplementary_gid = 3555 # exfel
 </v-click>
 
 ---
+layout: two-cols-header
+---
+
+## Method - Code
+
+::left::
+
+```rust
+fn get_entry_by_name(name: String) -> Response<Passwd> {
+    let c = conf();
+    found(c.as_ref().and_then(|c| {
+        live(name_to_no(&name), c).map(|n| passwd(n, c))
+    }))
+}
+
+// user exists only if the LDAP proposal group does
+fn live(no: Option<u32>, c: &Conf) -> Option<u32> {
+    no.filter(|n| exists(*n) && (!c.require_exp_dir
+        || proposal_dirs(*n, &c.exp_dir).next().is_some()))
+}
+```
+
+::right::
+
+```rust
+fn passwd(no: u32, c: &Conf) -> Passwd {
+    Passwd {
+        name: format!("euxfel-p{no:06}"),
+        passwd: "*".into(),
+        uid: id_of(no), // 60{no:06}2
+        gid: c.primary_gid,
+        gecos: format!("p{no:06} user"),
+        dir: home(no, &c.exp_dir),
+        shell: "/sbin/nologin".into(),
+    }
+}
+```
+
+---
 layout: two-cols
 ---
 
@@ -154,7 +201,7 @@ layout: two-cols
 <v-clicks>
 
 1. Proposal user resolves through NSS
-    - Home is under the proposal's `scratch`, `/nonexistent` without a proposal directory
+    - Home is under the proposal's `scratch`
 2. `xdamnprd` switches to it with `sudo`
 3. Groups come from `initgroups`
 
@@ -179,13 +226,15 @@ layout: two-cols
 ```shellsession
 [xdamnprd@test]$ getent passwd euxfel-p001234
 euxfel-p001234:*:600012342:15355:p001234 user:
-  /nonexistent:/sbin/nologin
+  /gpfs/exfel/exp/<inst>/<cycle>/p001234/scratch/
+  .exfl_prop_syn-home:/sbin/nologin
 ```
 
 ```shellsession
 [xdamnprd@test]$ getent passwd euxfel-p001234
 euxfel-p001234:*:600012342:15355:p001234 user:
-  /nonexistent:/sbin/nologin
+  /gpfs/exfel/exp/<inst>/<cycle>/p001234/scratch/
+  .exfl_prop_syn-home:/sbin/nologin
 
 [xdamnprd@test]$ sudo -u euxfel-p001234 id
 uid=600012342(euxfel-p001234) gid=15355(exfel_prop_syn) ...
@@ -194,7 +243,8 @@ uid=600012342(euxfel-p001234) gid=15355(exfel_prop_syn) ...
 ```shellsession
 [xdamnprd@test]$ getent passwd euxfel-p001234
 euxfel-p001234:*:600012342:15355:p001234 user:
-  /nonexistent:/sbin/nologin
+  /gpfs/exfel/exp/<inst>/<cycle>/p001234/scratch/
+  .exfl_prop_syn-home:/sbin/nologin
 
 [xdamnprd@test]$ sudo -u euxfel-p001234 id
 uid=600012342(euxfel-p001234) gid=15355(exfel_prop_syn) ...
@@ -206,7 +256,8 @@ uid=600012342(euxfel-p001234) gid=15355(exfel_prop_syn) ...
 ```shellsession
 [xdamnprd@test]$ getent passwd euxfel-p001234
 euxfel-p001234:*:600012342:15355:p001234 user:
-  /nonexistent:/sbin/nologin
+  /gpfs/exfel/exp/<inst>/<cycle>/p001234/scratch/
+  .exfl_prop_syn-home:/sbin/nologin
 
 [xdamnprd@test]$ sudo -u euxfel-p001234 id
 uid=600012342(euxfel-p001234) gid=15355(exfel_prop_syn) ...
@@ -267,14 +318,12 @@ layout: two-cols-header
 
 <v-clicks>
 
-- Files are owned by the proposal user, not `xdamnsnd`<br><br>
-
 - NSS module and config on every host that sees the users
   - Including slurmctld<br><br>
 
-- `AllowGroups` fallback needs re-testing on each Slurm release<br><br>
-
-- nscd negative cache delays a new proposal directory by ~20 s
+- uid range has to be reserved
+  - `600000002` to `609999992`, the proposal group gids
+  - No real user may be allocated a uid in it
 
 </v-clicks>
 
