@@ -52,6 +52,9 @@ This works through slurmctld's fallback that compares the user's primary group n
 re-run `tests/slurm.rs` (`allowgroups_real_plus_synthetic_group_accepts_proposal_user`) against
 each new Slurm release. `AllowAccounts` is the alternative if the access semantics may change.
 
+Production runs `GroupUpdateTime=600` with `GroupUpdateForce=1`, so `AllowGroups` changes for proposal
+users can take up to 10 minutes to apply.
+
 ## Installed by the package (do not template, or use `noreplace`-safe overrides)
 
 | File | Notes |
@@ -73,7 +76,7 @@ file { '/etc/proposal-nss.conf':   # only if GIDs differ from the shipped file
 # nsswitch.conf: append `proposal` to passwd and group in the module that owns the file
 ```
 
-No service to restart: nscd/sssd caches may need flushing after changing the config (`nscd -i passwd`).
+No service to restart: the module reads the config on every lookup.
 
 ### Home directory
 
@@ -108,7 +111,6 @@ directory and `pw_dir` is never `/nonexistent`. Only that directory is required;
 Set `require_prop_dir = false` on hosts without the tree (head and login nodes). With it on there,
 every proposal user vanishes, so slurmctld and `sbatch` reject all jobs and the `AllowGroups` fallback above
 fails. On a host that has the option on, an unmounted exp tree hides all proposal users.
-nscd's negative cache (default 20 s for passwd) delays a new proposal directory becoming usable.
 
 Observed with Slurm 24.11.5 (tests in `tests/slurm_conf.rs`):
 
