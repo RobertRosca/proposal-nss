@@ -16,3 +16,27 @@ jobs:
       # test/in-userns.sh needs unprivileged user namespaces, blocked by AppArmor on 24.04
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: cargo nextest run
+  container:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      checks: write # mikepenz/action-junit-report
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: pnss-test:ci
+          # distinct scope: rpm.yml uses the default scope
+          cache-from: type=gha,scope=container-test
+          cache-to: type=gha,scope=container-test,mode=max
+      # a failing run fails the job; named (no --rm) so junit.xml can be copied out
+      - run: docker run --name pnss-test pnss-test:ci
+      - if: always()
+        run: docker cp pnss-test:/src/target/nextest/ci/junit.xml junit.xml
+      - if: always()
+        uses: mikepenz/action-junit-report@v5
+        with:
+          report_paths: junit.xml
