@@ -12,12 +12,13 @@ struct Conf {
     primary_gid: u32,
     supp_gid: u32,
     exp_dir: String,
+    require_prop_dir: bool,
 }
 
-// `key = value` lines, `#` comments. GID keys required, `exp_dir` optional, unknown keys rejected, so a
+// `key = value` lines, `#` comments. GID keys required, `exp_dir` and `require_prop_dir` optional, unknown keys rejected, so a
 // typo fails closed (no users) instead of silently handing out wrong groups.
 fn parse(text: &str) -> Option<Conf> {
-    let (mut primary, mut supp, mut exp_dir) = (None, None, EXP_DIR.to_string());
+    let (mut primary, mut supp, mut exp_dir, mut require) = (None, None, EXP_DIR.to_string(), true);
     for line in text.lines().map(|l| l.split('#').next().unwrap_or("").trim()).filter(|l| !l.is_empty()) {
         let (k, v) = line.split_once('=')?;
         let v = v.trim();
@@ -25,15 +26,26 @@ fn parse(text: &str) -> Option<Conf> {
             "primary_gid" => primary = Some(v.parse().ok()?),
             "supplementary_gid" => supp = Some(v.parse().ok()?),
             "exp_dir" if v.starts_with('/') => exp_dir = v.trim_end_matches('/').to_string(),
+            "require_prop_dir" => require = v.parse().ok()?,
             _ => return None,
         }
     }
-    Some(Conf { primary_gid: primary?, supp_gid: supp?, exp_dir })
+    Some(Conf { primary_gid: primary?, supp_gid: supp?, exp_dir, require_prop_dir: require })
 }
 
 // Read per lookup: the file is tiny and this keeps Puppet changes live without a restart.
 fn conf() -> Option<Conf> {
-    parse(&std::fs::read_to_string(CONF).ok()?)
+    parse(&std::fs::read_to_string(conf_path()).ok()?)
+}
+
+// Test builds (`--features test-conf`) let each test point the module at its own conf. Release
+// builds have no environment lookup, so setuid callers (sudo) cannot redirect it.
+fn conf_path() -> std::ffi::OsString {
+    #[cfg(feature = "test-conf")]
+    if let Some(p) = std::env::var_os("PROPOSAL_NSS_CONF") {
+        return p;
+    }
+    CONF.into()
 }
 
 // uid == gid of the externally managed proposal group: `60{no:06}2`.
@@ -64,8 +76,10 @@ fn exists(no: u32) -> bool {
     }
 }
 
-fn live(no: Option<u32>) -> Option<u32> {
-    no.filter(|n| exists(*n))
+// With `require_prop_dir` (default; hosts that mount the exp tree) the proposal directory must exist
+// too, so nobody can switch to a proposal user without one. Hosts without the tree turn it off.
+fn live(no: Option<u32>, c: &Conf) -> Option<u32> {
+    no.filter(|n| exists(*n) && (!c.require_prop_dir || proposal_dirs(*n, &c.exp_dir).next().is_some()))
 }
 
 fn name_to_no(name: &str) -> Option<u32> {
@@ -80,19 +94,19 @@ fn name_to_no(name: &str) -> Option<u32> {
 // the proposal number, so find instrument/cycle by scanning {exp_dir}/*/*/p{no:06} (one readdir
 // per instrument; no caching, so new proposals appear immediately). Several matches (a proposal
 // moved between cycles/instruments) resolve to the lexicographically smallest path so the answer
-// is stable. No match, or any I/O error (GPFS unmounted, permissions): "/nonexistent". The user
-// is still returned (its existence is decided by the group, not the filesystem), and we never
-// panic or block on anything but readdir/stat.
-fn home(no: u32, exp_dir: &str) -> String {
+// is stable. No match, or any I/O error (GPFS unmounted, permissions): "/nonexistent". With
+// `require_prop_dir = false` the user is still returned (its existence is decided by the group, not
+// the filesystem), and we never panic or block on anything but readdir/stat.
+fn proposal_dirs(no: u32, exp_dir: &str) -> impl Iterator<Item = std::path::PathBuf> {
     let p = format!("p{no:06}");
     let subdirs = |d: &std::path::Path| {
         std::fs::read_dir(d).into_iter().flatten().flatten().filter(|e| e.path().is_dir()).map(|e| e.path()).collect::<Vec<_>>()
     };
-    subdirs(exp_dir.as_ref())
-        .iter()
-        .flat_map(|i| subdirs(i))
-        .map(|c| c.join(&p))
-        .filter(|d| d.is_dir())
+    subdirs(exp_dir.as_ref()).into_iter().flat_map(move |i| subdirs(&i)).map(move |c| c.join(&p)).filter(|d| d.is_dir())
+}
+
+fn home(no: u32, exp_dir: &str) -> String {
+    proposal_dirs(no, exp_dir)
         .min()
         .and_then(|d| d.join("scratch/.exfl_prop_syn-home").to_str().map(String::from))
         .unwrap_or_else(|| "/nonexistent".into())
@@ -128,11 +142,11 @@ impl PasswdHooks for ProposalPasswd {
     }
     fn get_entry_by_uid(uid: uid_t) -> Response<Passwd> {
         let c = conf();
-        found(c.as_ref().and_then(|c| live(id_to_no(uid)).map(|n| passwd(n, c))))
+        found(c.as_ref().and_then(|c| live(id_to_no(uid), c).map(|n| passwd(n, c))))
     }
     fn get_entry_by_name(name: String) -> Response<Passwd> {
         let c = conf();
-        found(c.as_ref().and_then(|c| live(name_to_no(&name)).map(|n| passwd(n, c))))
+        found(c.as_ref().and_then(|c| live(name_to_no(&name), c).map(|n| passwd(n, c))))
     }
 }
 
@@ -141,7 +155,7 @@ libnss_initgroups_hooks!(proposal, ProposalInitgroups);
 impl InitgroupsHooks for ProposalInitgroups {
     fn get_entries_by_user(user: String) -> Response<Vec<Group>> {
         let c = conf();
-        found(c.as_ref().and_then(|c| live(name_to_no(&user)).map(|n| vec![member(id_of(n)), member(c.supp_gid)])))
+        found(c.as_ref().and_then(|c| live(name_to_no(&user), c).map(|n| vec![member(id_of(n)), member(c.supp_gid)])))
     }
 }
 
@@ -165,6 +179,10 @@ mod tests {
         assert_eq!(c.exp_dir, EXP_DIR);
         assert_eq!(parse("primary_gid=1\nsupplementary_gid=2\nexp_dir = /x/y/ # c").unwrap().exp_dir, "/x/y");
         assert!(parse("primary_gid=1\nsupplementary_gid=2\nexp_dir=rel").is_none());
+        assert!(c.require_prop_dir);
+        assert!(parse("primary_gid=1\nsupplementary_gid=2\nrequire_prop_dir = true").unwrap().require_prop_dir);
+        assert!(!parse("primary_gid=1\nsupplementary_gid=2\nrequire_prop_dir=false").unwrap().require_prop_dir);
+        assert!(parse("primary_gid=1\nsupplementary_gid=2\nrequire_prop_dir=yes").is_none());
         let p = passwd(900_511, &c);
         assert_eq!((p.name.as_str(), p.uid, p.gid), ("euxfel-p900511", 609_005_112, 15355));
         assert_eq!(p.gecos, "p900511 user");

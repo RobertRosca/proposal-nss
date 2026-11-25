@@ -20,3 +20,10 @@ pub fn ok(cmd: &str, args: &[&str]) -> String {
 pub fn fails(cmd: &str, args: &[&str]) {
     assert!(!run(cmd, args).0, "`{cmd} {}` unexpectedly succeeded", args.join(" "));
 }
+
+/// Replaces a file via rename, so daemons reading it per lookup never see a truncated copy.
+pub fn write_atomic(path: &str, content: impl AsRef<[u8]>) -> std::io::Result<()> {
+    let tmp = format!("{path}.tmp-{}", std::process::id());
+    std::fs::write(&tmp, content)?;
+    std::fs::rename(&tmp, path)
+}

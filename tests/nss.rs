@@ -7,10 +7,10 @@ const N: &str = "euxfel-p001234";
 const CONF: &str = "/etc/proposal-nss.conf";
 const HOME: &str = ".exfl_prop_syn-home";
 
-/// Points the module at a fake exp tree for the test's lifetime, then restores the conf.
-/// Rewrites /etc/proposal-nss.conf: harmless in the per-test userns, so nextest serialises
-/// the nss binary (test group) for the shared-/etc ci container.
-struct FakeExp(std::path::PathBuf, String);
+/// Points the module at a fake exp tree through a conf of the test's own: a copy of
+/// /etc/proposal-nss.conf plus `exp_dir`, read by the test-conf module build via PROPOSAL_NSS_CONF.
+/// /etc is never written, so the nss tests run in parallel and never disturb other test binaries.
+struct FakeExp(std::path::PathBuf, std::path::PathBuf);
 
 impl FakeExp {
     fn new(name: &str, dirs: &[&str]) -> Self {
@@ -19,11 +19,16 @@ impl FakeExp {
         for d in dirs {
             std::fs::create_dir_all(root.join(d)).unwrap();
         }
-        let old = std::fs::read_to_string(CONF).unwrap();
-        std::fs::write(CONF, format!("{old}
-exp_dir = {}
-", root.display())).unwrap();
-        Self(root, old)
+        let conf = root.with_extension("conf");
+        let base = std::fs::read_to_string(CONF).unwrap();
+        std::fs::write(&conf, format!("{base}\nexp_dir = {}\n", root.display())).unwrap();
+        // SAFETY: nextest runs each test in its own process and nothing else reads the env concurrently.
+        unsafe { std::env::set_var("PROPOSAL_NSS_CONF", &conf) };
+        Self(root, conf)
+    }
+    fn require(&self) {
+        let cur = std::fs::read_to_string(&self.1).unwrap();
+        std::fs::write(&self.1, format!("{cur}require_prop_dir = true\n")).unwrap();
     }
     fn home(&self, rel: &str) -> String {
         format!("{}/{rel}/scratch/{HOME}", self.0.display())
@@ -32,7 +37,9 @@ exp_dir = {}
 
 impl Drop for FakeExp {
     fn drop(&mut self) {
-        let _ = std::fs::write(CONF, &self.1);
+        // SAFETY: as in new().
+        unsafe { std::env::remove_var("PROPOSAL_NSS_CONF") };
+        let _ = std::fs::remove_file(&self.1);
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
@@ -88,10 +95,45 @@ fn multiple_matches_pick_smallest_path() {
 }
 
 #[test]
-fn missing_proposal_dir_falls_back_but_user_stays_visible() {
+fn missing_proposal_dir_falls_back_but_user_stays_visible_without_require_prop_dir() {
+    // the fixture conf sets require_prop_dir = false
     let t = FakeExp::new("missing", &["FXE/202230/p001235"]);
     assert_eq!(dir_of(N), "/nonexistent");
     drop(t);
     // exp_dir absent (GPFS not mounted): same fallback
     assert_eq!(dir_of(U), "/nonexistent");
+}
+
+#[test]
+fn require_prop_dir_hides_user_without_proposal_dir() {
+    let t = FakeExp::new("req-missing", &["FXE/202230/p001235"]);
+    t.require();
+    for k in [U, N] {
+        fails("getent", &["passwd", k]);
+    }
+    fails("id", &[N]);
+}
+
+#[test]
+fn require_prop_dir_hides_user_when_exp_tree_is_empty() {
+    let t = FakeExp::new("req-empty", &[]);
+    t.require();
+    fails("getent", &["passwd", N]);
+}
+
+#[test]
+fn require_prop_dir_keeps_user_with_proposal_dir() {
+    let t = FakeExp::new("req-present", &["FXE/202230/p001234"]);
+    t.require();
+    for k in [U, N] {
+        assert_eq!(dir_of(k), t.home("FXE/202230/p001234"));
+    }
+    assert!(ok("id", &[N]).contains("3555(exfel)"));
+}
+
+#[test]
+fn require_prop_dir_still_needs_proposal_group() {
+    let t = FakeExp::new("req-nogroup", &["FXE/202230/p001235"]);
+    t.require();
+    fails("getent", &["passwd", "euxfel-p001235"]);
 }

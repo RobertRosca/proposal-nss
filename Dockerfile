@@ -39,9 +39,13 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked <<EOT
 set -euo pipefail
 cargo build --release
 cargo test --release --no-run
+# test-conf module for the nss tests (test/build-module.sh, run again as a no-op by nextest)
+cargo build --lib --features test-conf --target-dir target/test-conf
 install -m644 target/release/libnss_proposal.so /usr/lib/libnss_proposal.so.2
 install -m440 sudoers/proposal-spawner /etc/sudoers.d/proposal-spawner
 install -m644 etc/proposal-nss.conf /etc/proposal-nss.conf
+# the container is head node too: proposal users without a dir must resolve (tests opt in to require_prop_dir)
+echo 'require_prop_dir = false' >> /etc/proposal-nss.conf
 install -m755 test/prod-prolog/*.sh /etc/slurm/
 sed -i -E 's/^(passwd|group):.*/& proposal/' /etc/nsswitch.conf
 EOT
