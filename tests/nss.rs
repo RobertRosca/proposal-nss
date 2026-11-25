@@ -92,7 +92,8 @@ fn multiple_matches_pick_smallest_path() {
 }
 
 #[test]
-fn missing_proposal_dir_falls_back_but_user_stays_visible_by_default() {
+fn missing_proposal_dir_falls_back_but_user_stays_visible_without_require_prop_dir() {
+    // the fixture conf sets require_prop_dir = false
     let t = FakeExp::new("missing", &["FXE/202230/p001235"]);
     assert_eq!(dir_of(N), "/nonexistent");
     drop(t);

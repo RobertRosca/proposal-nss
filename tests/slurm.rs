@@ -312,7 +312,7 @@ fn prolog_mkhomedir_creates_nonexistent_junk_dir_without_proposal_dir() {
     assert!(std::path::Path::new("/nonexistent").exists(), "prolog log:\n{}", log("prolog", 8));
 }
 
-/// Switches the module to `require_prop_dir = true` for the guard's lifetime. The single container is
+/// Switches the module to `require_prop_dir = true` (the fixture conf turns it off) for the guard's lifetime. The single container is
 /// head and compute node at once, so every daemon sees the setting; the tests using this are
 /// exclusive (`threads-required` in .config/nextest.toml) because proposal users without a dir vanish.
 struct RequirePropDir(String);

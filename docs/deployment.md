@@ -9,6 +9,7 @@ The package installs everything it can itself. A host manager (e.g. Puppet) only
 | Groups `exfel` and `exfel_prop_syn`, user `xdamnprd` (directory service) | Proposal users get these as gids; sudoers rule names them. Package does not create them. |
 | `/etc/nsswitch.conf` entries (below) | glibc NSS has no drop-in mechanism, so the package cannot edit it. |
 | Values in `/etc/proposal-nss.conf` if the GIDs differ from the shipped defaults | Must match `getent group exfel_prop_syn` / `exfel`. |
+| `require_prop_dir = false` in `/etc/proposal-nss.conf` on hosts without the exp tree (head and login nodes) | Otherwise every proposal user vanishes there; see "Require proposal directory". |
 
 ### nsswitch.conf
 
@@ -56,7 +57,7 @@ each new Slurm release. `AllowAccounts` is the alternative if the access semanti
 | File | Notes |
 |------|-------|
 | `/usr/lib64/libnss_proposal.so.2` | The NSS module. |
-| `/etc/proposal-nss.conf` | `%config(noreplace)`. Keys `primary_gid` and `supplementary_gid`, both required; optional `exp_dir` (default `/gpfs/exfel/exp`, see "Home directory") and `require_prop_dir` (default `false`, see "Require proposal directory"). Invalid or missing file means the module exposes no users. |
+| `/etc/proposal-nss.conf` | `%config(noreplace)`. Keys `primary_gid` and `supplementary_gid`, both required; optional `exp_dir` (default `/gpfs/exfel/exp`, see "Home directory") and `require_prop_dir` (default `true`, see "Require proposal directory"). Invalid or missing file means the module exposes no users. |
 | `/etc/sudoers.d/proposal-spawner` | `%config(noreplace)`, mode 0440. Validate with `visudo -cf` before deploying a modified copy. |
 
 ## Puppet sketch
@@ -81,25 +82,24 @@ encodes the proposal number, so the module scans `{exp_dir}/*/*/p{no:06}` on eve
 (no cache; new proposals show up at once). If several proposal directories match, the
 lexicographically smallest path wins. If none match (or `exp_dir` is unreadable, e.g. GPFS not
 mounted) `pw_dir` is `/nonexistent`; the user itself stays visible, since existence is decided by
-the proposal group (unless `require_prop_dir` is set). The module never creates the directory.
+the proposal group (only with `require_prop_dir = false`). The module never creates the directory.
 
 ### Require proposal directory
 
-Set `require_prop_dir = true` in `/etc/proposal-nss.conf` on hosts that mount the exp tree (the
-allocation nodes). A proposal user is then visible, to passwd and initgroups lookups alike, only
-while `{exp_dir}/*/*/p{no:06}` exists, so `sudo -u` and job launch fail for a proposal without a
+`require_prop_dir` is on by default, for hosts that mount the exp tree (the allocation nodes). A
+proposal user is then visible, to passwd and initgroups lookups alike, only while `{exp_dir}/*/*/p{no:06}` exists, so `sudo -u` and job launch fail for a proposal without a
 directory and `pw_dir` is never `/nonexistent`. Only that directory is required; the
 `scratch/.exfl_prop_syn-home` home is created by `mkhomedir_helper`.
 
-Leave it `false` on hosts without the tree (head and login nodes). With it set there, every proposal
-user vanishes, so slurmctld and `sbatch` reject all jobs and the `AllowGroups` fallback above
-fails. On a host that has the option set, an unmounted exp tree hides all proposal users.
+Set `require_prop_dir = false` on hosts without the tree (head and login nodes). With it on there,
+every proposal user vanishes, so slurmctld and `sbatch` reject all jobs and the `AllowGroups` fallback above
+fails. On a host that has the option on, an unmounted exp tree hides all proposal users.
 nscd's negative cache (default 20 s for passwd) delays a new proposal directory becoming usable.
 
 Observed with Slurm 24.11.5 (tests in `tests/slurm.rs`, `require_prop_dir_*`):
 
 - Directory missing at submit: `sbatch --uid` fails with `Invalid --uid specification` when
-  submitting from a host that has the option set; the prolog never runs, so no `/nonexistent` is created.
+  submitting from a host that has the option on; the prolog never runs, so no `/nonexistent` is created.
 - Directory missing at launch (or vanishes while the job is queued): slurmd cannot resolve the user,
   slurmctld requeues the job and holds it (`Reason=launch_failed_requeued_held`); the node stays idle.
   A held job does not run again by itself, even once the directory is back: `scontrol release <id>` it,

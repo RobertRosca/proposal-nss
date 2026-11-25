@@ -18,7 +18,7 @@ struct Conf {
 // `key = value` lines, `#` comments. GID keys required, `exp_dir` and `require_prop_dir` optional, unknown keys rejected, so a
 // typo fails closed (no users) instead of silently handing out wrong groups.
 fn parse(text: &str) -> Option<Conf> {
-    let (mut primary, mut supp, mut exp_dir, mut require) = (None, None, EXP_DIR.to_string(), false);
+    let (mut primary, mut supp, mut exp_dir, mut require) = (None, None, EXP_DIR.to_string(), true);
     for line in text.lines().map(|l| l.split('#').next().unwrap_or("").trim()).filter(|l| !l.is_empty()) {
         let (k, v) = line.split_once('=')?;
         let v = v.trim();
@@ -66,8 +66,8 @@ fn exists(no: u32) -> bool {
     }
 }
 
-// With `require_prop_dir` (hosts that mount the exp tree) the proposal directory must exist too, so
-// nobody can switch to a proposal user without one. Hosts without the tree leave it off.
+// With `require_prop_dir` (default; hosts that mount the exp tree) the proposal directory must exist
+// too, so nobody can switch to a proposal user without one. Hosts without the tree turn it off.
 fn live(no: Option<u32>, c: &Conf) -> Option<u32> {
     no.filter(|n| exists(*n) && (!c.require_prop_dir || proposal_dirs(*n, &c.exp_dir).next().is_some()))
 }
@@ -84,8 +84,8 @@ fn name_to_no(name: &str) -> Option<u32> {
 // the proposal number, so find instrument/cycle by scanning {exp_dir}/*/*/p{no:06} (one readdir
 // per instrument; no caching, so new proposals appear immediately). Several matches (a proposal
 // moved between cycles/instruments) resolve to the lexicographically smallest path so the answer
-// is stable. No match, or any I/O error (GPFS unmounted, permissions): "/nonexistent". Unless
-// `require_prop_dir` is set the user is still returned (its existence is decided by the group, not
+// is stable. No match, or any I/O error (GPFS unmounted, permissions): "/nonexistent". With
+// `require_prop_dir = false` the user is still returned (its existence is decided by the group, not
 // the filesystem), and we never panic or block on anything but readdir/stat.
 fn proposal_dirs(no: u32, exp_dir: &str) -> impl Iterator<Item = std::path::PathBuf> {
     let p = format!("p{no:06}");
@@ -169,7 +169,7 @@ mod tests {
         assert_eq!(c.exp_dir, EXP_DIR);
         assert_eq!(parse("primary_gid=1\nsupplementary_gid=2\nexp_dir = /x/y/ # c").unwrap().exp_dir, "/x/y");
         assert!(parse("primary_gid=1\nsupplementary_gid=2\nexp_dir=rel").is_none());
-        assert!(!c.require_prop_dir);
+        assert!(c.require_prop_dir);
         assert!(parse("primary_gid=1\nsupplementary_gid=2\nrequire_prop_dir = true").unwrap().require_prop_dir);
         assert!(!parse("primary_gid=1\nsupplementary_gid=2\nrequire_prop_dir=false").unwrap().require_prop_dir);
         assert!(parse("primary_gid=1\nsupplementary_gid=2\nrequire_prop_dir=yes").is_none());
