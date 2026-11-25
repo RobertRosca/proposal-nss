@@ -144,7 +144,7 @@ xdamnprd ALL=(%exfel_prop_syn) NOPASSWD: ALL
 primary_gid = 15355      # exfel_prop_syn
 supplementary_gid = 3555 # exfel
 # exp_dir = /gpfs/exfel/exp
-# require_exp_dir = true
+# require_prop_dir = false # hosts without the exp tree
 ```
 
 </v-click>
@@ -159,30 +159,37 @@ layout: two-cols-header
 
 ```rust
 fn get_entry_by_name(name: String) -> Response<Passwd> {
-    let c = conf();
-    found(c.as_ref().and_then(|c| {
-        live(name_to_no(&name), c).map(|n| passwd(n, c))
-    }))
+    lookup(name_to_no(&name), true, passwd)
 }
 
 // user exists only if the LDAP proposal group does
-fn live(no: Option<u32>, c: &Conf) -> Option<u32> {
-    no.filter(|n| exists(*n) && (!c.require_exp_dir
-        || proposal_dirs(*n, &c.exp_dir).next().is_some()))
+// (and, with require_prop_dir, the proposal dir)
+fn live(no: u32, c: &Conf, need_dirs: bool)
+    -> Result<Option<Vec<PathBuf>>, Fail> {
+    if !exists(no)? { return Ok(None); }
+    if !(c.require_prop_dir || need_dirs) {
+        return Ok(Some(vec![]));
+    }
+    match proposal_dirs(no, &c.exp_dir) {
+        Ok(d) if c.require_prop_dir && d.is_empty() => Ok(None),
+        Ok(d) => Ok(Some(d)),
+        Err(e) if c.require_prop_dir => Err(e),
+        Err(_) => Ok(Some(vec![])),
+    }
 }
 ```
 
 ::right::
 
 ```rust
-fn passwd(no: u32, c: &Conf) -> Passwd {
+fn passwd(no: u32, c: &Conf, dirs: Vec<PathBuf>) -> Passwd {
     Passwd {
         name: format!("euxfel-p{no:06}"),
         passwd: "*".into(),
         uid: id_of(no), // 60{no:06}2
         gid: c.primary_gid,
         gecos: format!("p{no:06} user"),
-        dir: home(no, &c.exp_dir),
+        dir: home(dirs), // {exp_dir}/*/*/p{no}/scratch/...
         shell: "/sbin/nologin".into(),
     }
 }
@@ -294,10 +301,10 @@ layout: two-cols-header
 
 <v-clicks>
 
-- `require_exp_dir`
-  - Only on nodes that mount the exp tree
-  - Job without a proposal directory is rejected at submit
-  - Directory gone before launch: job requeued and held
+- `require_prop_dir` (on by default)
+  - Off on hosts without the exp tree (head/login nodes)
+  - No proposal directory at submit: rejected (if the submit host has it on)
+  - No directory at launch: job requeued and held until `scontrol release`
 - Prolog/epilog
   - `mkhomedir_helper` creates the home in `scratch`
   - Epilog cleans up files and processes of the synthetic uid
