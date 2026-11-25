@@ -35,7 +35,17 @@ fn parse(text: &str) -> Option<Conf> {
 
 // Read per lookup: the file is tiny and this keeps Puppet changes live without a restart.
 fn conf() -> Option<Conf> {
-    parse(&std::fs::read_to_string(CONF).ok()?)
+    parse(&std::fs::read_to_string(conf_path()).ok()?)
+}
+
+// Test builds (`--features test-conf`) let each test point the module at its own conf. Release
+// builds have no environment lookup, so setuid callers (sudo) cannot redirect it.
+fn conf_path() -> std::ffi::OsString {
+    #[cfg(feature = "test-conf")]
+    if let Some(p) = std::env::var_os("PROPOSAL_NSS_CONF") {
+        return p;
+    }
+    CONF.into()
 }
 
 // uid == gid of the externally managed proposal group: `60{no:06}2`.

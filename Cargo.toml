@@ -7,6 +7,10 @@ edition = "2024"
 name = "nss_proposal"
 crate-type = ["cdylib"]
 
+[features]
+# test builds only: conf path from PROPOSAL_NSS_CONF (see conf_path in src/lib.rs)
+test-conf = []
+
 [dependencies]
 libnss = "0.9"
 libc = "0.2" # required by the libnss_*_hooks! macro expansions
