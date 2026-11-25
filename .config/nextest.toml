@@ -3,13 +3,15 @@ experimental = ["setup-scripts", "wrapper-scripts"]
 # default profile = host: unit + NSS tests in a user namespace, no root, no Docker.
 # ci profile = the Docker image (see Dockerfile): everything, with real fixtures and Slurm.
 [profile.default]
-default-filter = 'not (binary(sudo) or binary(slurm))'
+default-filter = 'not (binary(sudo) or binary(slurm) or binary(slurm_conf))'
 
 [scripts.wrapper.userns]
 command = 'test/in-userns.sh'
 
+# cargo only builds the cdylib for `cargo build`, not for tests. The nss tests load this test-conf
+# build (conf path from PROPOSAL_NSS_CONF); its own target dir keeps the feature out of regular builds.
 [scripts.setup.build-module]
-command = 'test/build-module.sh'
+command = 'cargo build --lib --features test-conf --target-dir target/test-conf'
 
 [[profile.default.scripts]]
 filter = 'binary(nss)'
@@ -36,21 +38,21 @@ filter = 'binary(nss)'
 run-wrapper = 'test-module'
 
 [[profile.ci.scripts]]
-filter = 'binary(nss) or binary(sudo) or binary(slurm)'
+filter = 'binary(nss) or binary(sudo) or binary(slurm) or binary(slurm_conf)'
 setup = 'nss-fixtures'
 
 [[profile.ci.scripts]]
-filter = 'binary(slurm)'
+filter = 'binary(slurm) or binary(slurm_conf)'
 setup = 'slurm'
 
 [profile.ci]
 default-filter = 'all()'
 fail-fast = false
 
-# require_prop_dir tests rewrite the shared proposal-nss.conf, hiding proposal users without a dir
+# slurm_conf tests rewrite the shared proposal-nss.conf, hiding proposal users without a dir
 # from every daemon: run them with the whole test pool to themselves.
 [[profile.ci.overrides]]
-filter = 'binary(slurm) and test(/^require_prop_dir_/)'
+filter = 'binary(slurm_conf)'
 threads-required = 'num-cpus'
 
 [profile.ci.junit]
