@@ -137,3 +137,65 @@ fn require_prop_dir_still_needs_proposal_group() {
     t.require();
     fails("getent", &["passwd", "euxfel-p001235"]);
 }
+
+/// Points the module at a conf of the test's own that is missing, or a directory (read fails with
+/// EISDIR, not ENOENT, even as root) for `unreadable()`. /etc is never touched.
+struct BadConf(std::path::PathBuf);
+
+impl BadConf {
+    fn at(name: &str, dir: bool) -> Self {
+        let p = std::env::temp_dir().join(format!("proposal-nss-{name}-{}.conf", std::process::id()));
+        let _ = std::fs::remove_dir(&p);
+        let _ = std::fs::remove_file(&p);
+        if dir {
+            std::fs::create_dir(&p).unwrap();
+        }
+        // SAFETY: nextest runs each test in its own process and nothing else reads the env concurrently.
+        unsafe { std::env::set_var("PROPOSAL_NSS_CONF", &p) };
+        Self(p)
+    }
+    fn missing() -> Self {
+        Self::at("missing", false)
+    }
+    fn unreadable() -> Self {
+        Self::at("unreadable", true)
+    }
+}
+
+impl Drop for BadConf {
+    fn drop(&mut self) {
+        // SAFETY: as in at().
+        unsafe { std::env::remove_var("PROPOSAL_NSS_CONF") };
+        let _ = std::fs::remove_dir(&self.0);
+    }
+}
+
+/// (getpwnam_r return code, no entry returned)
+fn getpwnam_rc(name: &str) -> (i32, bool) {
+    let n = std::ffi::CString::new(name).unwrap();
+    let mut pw: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut res = std::ptr::null_mut();
+    let mut buf = vec![0 as libc::c_char; 4096];
+    let rc = unsafe { libc::getpwnam_r(n.as_ptr(), &mut pw, buf.as_mut_ptr(), buf.len(), &mut res) };
+    (rc, res.is_null())
+}
+
+#[test]
+fn missing_conf_is_a_miss() {
+    let _c = BadConf::missing();
+    assert_eq!(getpwnam_rc(N), (0, true));
+}
+
+#[test]
+fn unreadable_conf_is_unavailable_not_absent() {
+    let _c = BadConf::unreadable();
+    assert_eq!(getpwnam_rc(N), (libc::EIO, true));
+}
+
+#[test]
+fn non_proposal_names_do_not_read_conf() {
+    let _c = BadConf::unreadable();
+    for k in ["nosuchuser", "euxfel-p1234", "euxfel-p00123x"] {
+        assert_eq!(getpwnam_rc(k), (0, true), "{k}");
+    }
+}

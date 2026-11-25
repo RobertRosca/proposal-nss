@@ -33,9 +33,22 @@ fn parse(text: &str) -> Option<Conf> {
     Some(Conf { primary_gid: primary?, supp_gid: supp?, exp_dir, require_prop_dir: require })
 }
 
-// Read per lookup: the file is tiny and this keeps Puppet changes live without a restart.
-fn conf() -> Option<Conf> {
-    parse(&std::fs::read_to_string(conf_path()).ok()?)
+// Why a lookup could not be answered; NotFound is reserved for "answered: absent", so Slurm holds
+// a launch on a transient failure instead of treating the user as gone.
+#[derive(Debug, PartialEq)]
+enum Fail {
+    TryAgain,
+    Unavail,
+}
+
+// Read per lookup: the file is tiny and this keeps Puppet changes live without a restart. A missing
+// or invalid file means no users (Ok(None)); any other read error is Unavail.
+fn conf() -> Result<Option<Conf>, Fail> {
+    match std::fs::read_to_string(conf_path()) {
+        Ok(t) => Ok(parse(&t)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err(Fail::Unavail),
+    }
 }
 
 // Test builds (`--features test-conf`) let each test point the module at its own conf. Release
@@ -60,7 +73,9 @@ fn id_to_no(id: u32) -> Option<u32> {
 
 // The proposal group is managed elsewhere (LDAP); a user exists only if it does.
 // We expose no groups, so this lookup cannot recurse into this module.
-fn exists(no: u32) -> bool {
+// A getgrgid_r failure (sssd/LDAP EAGAIN/EIO, ERANGE at the cap) is TryAgain; POSIX also lets
+// ENOENT/ESRCH/EBADF/EPERM mean "no such group".
+fn exists(no: u32) -> Result<bool, Fail> {
     let mut grp: libc::group = unsafe { std::mem::zeroed() };
     let mut res: *mut libc::group = std::ptr::null_mut();
     let mut buf = vec![0u8; 1024];
@@ -72,14 +87,31 @@ fn exists(no: u32) -> bool {
             buf.resize(buf.len() * 2, 0);
             continue;
         }
-        return rc == 0 && !res.is_null();
+        return match rc {
+            0 => Ok(!res.is_null()),
+            libc::ENOENT | libc::ESRCH | libc::EBADF | libc::EPERM => Ok(false),
+            _ => Err(Fail::TryAgain),
+        };
     }
 }
 
 // With `require_prop_dir` (default; hosts that mount the exp tree) the proposal directory must exist
 // too, so nobody can switch to a proposal user without one. Hosts without the tree turn it off.
-fn live(no: Option<u32>, c: &Conf) -> Option<u32> {
-    no.filter(|n| exists(*n) && (!c.require_prop_dir || proposal_dirs(*n, &c.exp_dir).next().is_some()))
+// Returns the proposal dirs found, scanned when `require_prop_dir` or `need_dirs` (the caller builds
+// a passwd entry), so the exp tree is read once per lookup.
+fn live(no: u32, c: &Conf, need_dirs: bool) -> Result<Option<Vec<std::path::PathBuf>>, Fail> {
+    if !exists(no)? {
+        return Ok(None);
+    }
+    if !(c.require_prop_dir || need_dirs) {
+        return Ok(Some(vec![]));
+    }
+    match proposal_dirs(no, &c.exp_dir) {
+        Ok(d) if c.require_prop_dir && d.is_empty() => Ok(None),
+        Ok(d) => Ok(Some(d)),
+        Err(e) if c.require_prop_dir => Err(e),
+        Err(_) => Ok(Some(vec![])),
+    }
 }
 
 fn name_to_no(name: &str) -> Option<u32> {
@@ -96,30 +128,65 @@ fn name_to_no(name: &str) -> Option<u32> {
 // moved between cycles/instruments) resolve to the lexicographically smallest path so the answer
 // is stable. No match, or any I/O error (GPFS unmounted, permissions): "/nonexistent". With
 // `require_prop_dir = false` the user is still returned (its existence is decided by the group, not
-// the filesystem), and we never panic or block on anything but readdir/stat.
-fn proposal_dirs(no: u32, exp_dir: &str) -> impl Iterator<Item = std::path::PathBuf> {
-    let p = format!("p{no:06}");
-    let subdirs = |d: &std::path::Path| {
-        std::fs::read_dir(d).into_iter().flatten().flatten().filter(|e| e.path().is_dir()).map(|e| e.path()).collect::<Vec<_>>()
+// the filesystem), and we never panic or block on anything but readdir/stat. With
+// `require_prop_dir`, an I/O error other than ENOENT is Unavail rather than "no such proposal".
+fn proposal_dirs(no: u32, exp_dir: &str) -> Result<Vec<std::path::PathBuf>, Fail> {
+    use std::io::ErrorKind::{NotADirectory, NotFound};
+    let absent = |e: &std::io::Error| matches!(e.kind(), NotFound | NotADirectory);
+    // Errors do not abort the scan (one unreadable sibling must not hide a readable proposal); they
+    // are remembered and only matter when nothing matched.
+    let mut err = false;
+    let mut subdirs = |d: &std::path::Path| {
+        let mut out = vec![];
+        match std::fs::read_dir(d) {
+            Ok(rd) => {
+                for e in rd {
+                    match e {
+                        Ok(e) => match std::fs::metadata(e.path()) {
+                            Ok(m) if m.is_dir() => out.push(e.path()),
+                            Ok(_) => {}
+                            Err(e) => err |= !absent(&e),
+                        },
+                        Err(_) => err = true,
+                    }
+                }
+            }
+            Err(e) => err |= e.kind() != NotFound,
+        }
+        out
     };
-    subdirs(exp_dir.as_ref()).into_iter().flat_map(move |i| subdirs(&i)).map(move |c| c.join(&p)).filter(|d| d.is_dir())
+    let p = format!("p{no:06}");
+    let mut cycles = vec![];
+    for i in subdirs(exp_dir.as_ref()) {
+        cycles.extend(subdirs(&i));
+    }
+    let mut found = vec![];
+    for c in cycles {
+        let d = c.join(&p);
+        match std::fs::metadata(&d) {
+            Ok(m) if m.is_dir() => found.push(d),
+            Ok(_) => {}
+            Err(e) => err |= !absent(&e),
+        }
+    }
+    if found.is_empty() && err { Err(Fail::Unavail) } else { Ok(found) }
 }
 
-fn home(no: u32, exp_dir: &str) -> String {
-    proposal_dirs(no, exp_dir)
+fn home(dirs: Vec<std::path::PathBuf>) -> String {
+    dirs.into_iter()
         .min()
         .and_then(|d| d.join("scratch/.exfl_prop_syn-home").to_str().map(String::from))
         .unwrap_or_else(|| "/nonexistent".into())
 }
 
-fn passwd(no: u32, c: &Conf) -> Passwd {
+fn passwd(no: u32, c: &Conf, dirs: Vec<std::path::PathBuf>) -> Passwd {
     Passwd {
         name: format!("euxfel-p{no:06}"),
         passwd: "*".into(), // locked; "x" makes pam_unix look up a shadow entry we don't provide
         uid: id_of(no),
         gid: c.primary_gid,
         gecos: format!("p{no:06} user"),
-        dir: home(no, &c.exp_dir),
+        dir: home(dirs),
         shell: "/sbin/nologin".into(),
     }
 }
@@ -129,8 +196,32 @@ fn member(gid: u32) -> Group {
     Group { name: String::new(), passwd: "x".into(), gid, members: vec![] }
 }
 
-fn found<T>(v: Option<T>) -> Response<T> {
-    v.map_or(Response::NotFound, Response::Success)
+// glibc hands the callers the errno left behind on TryAgain/Unavail, and libnss leaves errno
+// untouched on non-success in passwd lookups (a stale one, e.g. EISDIR from our own read, was seen
+// leaking), so set it here: EAGAIN for TryAgain (never ERANGE, which means "grow the buffer"), EIO
+// for Unavail. initgroups overwrites it with ENOENT in the libnss glue (initgroups.rs:37,45).
+fn found<T>(v: Result<Option<T>, Fail>) -> Response<T> {
+    let set = |e| unsafe { *libc::__errno_location() = e };
+    match v {
+        Ok(v) => v.map_or(Response::NotFound, Response::Success),
+        Err(Fail::TryAgain) => {
+            set(libc::EAGAIN);
+            Response::TryAgain
+        }
+        Err(Fail::Unavail) => {
+            set(libc::EIO);
+            Response::Unavail
+        }
+    }
+}
+
+// Cheap id/name check first, so misses and real users never read the conf; then conf, then liveness.
+fn lookup<T>(no: Option<u32>, need_dirs: bool, build: impl FnOnce(u32, &Conf, Vec<std::path::PathBuf>) -> T) -> Response<T> {
+    found((|| {
+        let Some(n) = no else { return Ok(None) };
+        let Some(c) = conf()? else { return Ok(None) };
+        Ok(live(n, &c, need_dirs)?.map(|d| build(n, &c, d)))
+    })())
 }
 
 struct ProposalPasswd;
@@ -141,12 +232,10 @@ impl PasswdHooks for ProposalPasswd {
         Response::Success(vec![])
     }
     fn get_entry_by_uid(uid: uid_t) -> Response<Passwd> {
-        let c = conf();
-        found(c.as_ref().and_then(|c| live(id_to_no(uid), c).map(|n| passwd(n, c))))
+        lookup(id_to_no(uid), true, passwd)
     }
     fn get_entry_by_name(name: String) -> Response<Passwd> {
-        let c = conf();
-        found(c.as_ref().and_then(|c| live(name_to_no(&name), c).map(|n| passwd(n, c))))
+        lookup(name_to_no(&name), true, passwd)
     }
 }
 
@@ -154,8 +243,7 @@ struct ProposalInitgroups;
 libnss_initgroups_hooks!(proposal, ProposalInitgroups);
 impl InitgroupsHooks for ProposalInitgroups {
     fn get_entries_by_user(user: String) -> Response<Vec<Group>> {
-        let c = conf();
-        found(c.as_ref().and_then(|c| live(name_to_no(&user), c).map(|n| vec![member(id_of(n)), member(c.supp_gid)])))
+        lookup(name_to_no(&user), false, |n, c, _| vec![member(id_of(n)), member(c.supp_gid)])
     }
 }
 
@@ -183,12 +271,58 @@ mod tests {
         assert!(parse("primary_gid=1\nsupplementary_gid=2\nrequire_prop_dir = true").unwrap().require_prop_dir);
         assert!(!parse("primary_gid=1\nsupplementary_gid=2\nrequire_prop_dir=false").unwrap().require_prop_dir);
         assert!(parse("primary_gid=1\nsupplementary_gid=2\nrequire_prop_dir=yes").is_none());
-        let p = passwd(900_511, &c);
+        let p = passwd(900_511, &c, vec![]);
         assert_eq!((p.name.as_str(), p.uid, p.gid), ("euxfel-p900511", 609_005_112, 15355));
         assert_eq!(p.gecos, "p900511 user");
         assert_eq!(name_to_no(&p.name), Some(900_511));
         for bad in ["euxfel-p1234", "euxfel-p1000000", "euxfel-p+12345", "euxfel-p00123x", "root"] {
             assert_eq!(name_to_no(bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn failures_map_to_status() {
+        assert_eq!(found(Ok(None::<u32>)), Response::NotFound);
+        assert_eq!(found(Ok(Some(1))), Response::Success(1));
+        let errno = || unsafe { *libc::__errno_location() };
+        assert_eq!(found::<u32>(Err(Fail::Unavail)), Response::Unavail);
+        assert_eq!(errno(), libc::EIO);
+        assert_eq!(found::<u32>(Err(Fail::TryAgain)), Response::TryAgain);
+        assert_eq!(errno(), libc::EAGAIN);
+    }
+
+    #[test]
+    fn proposal_dirs_distinguishes_absent_from_error() {
+        let t = std::env::temp_dir().join(format!("proposal-nss-unit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        std::fs::create_dir_all(t.join("FXE/202230/p001234")).unwrap();
+        let root = t.to_str().unwrap();
+        assert_eq!(proposal_dirs(1234, root).unwrap(), vec![t.join("FXE/202230/p001234")]);
+        assert_eq!(proposal_dirs(1235, root).unwrap(), Vec::<std::path::PathBuf>::new());
+        assert_eq!(proposal_dirs(1234, t.join("absent").to_str().unwrap()).unwrap(), Vec::<std::path::PathBuf>::new());
+        // a file where the exp dir should be is an I/O error, not "no proposal"
+        std::fs::write(t.join("file"), "").unwrap();
+        assert_eq!(proposal_dirs(1234, t.join("file").to_str().unwrap()), Err(Fail::Unavail));
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    #[test]
+    fn proposal_dirs_survives_unreadable_sibling() {
+        // root bypasses mode 000 (container tier runs unit tests as root), so nothing to test there
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        use std::os::unix::fs::PermissionsExt;
+        let t = std::env::temp_dir().join(format!("proposal-nss-unit-sib-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        std::fs::create_dir_all(t.join("FXE/202230/p001234")).unwrap();
+        std::fs::create_dir_all(t.join("AAA/202230")).unwrap();
+        std::fs::set_permissions(t.join("AAA"), std::fs::Permissions::from_mode(0o000)).unwrap();
+        let root = t.to_str().unwrap();
+        assert_eq!(proposal_dirs(1234, root).unwrap(), vec![t.join("FXE/202230/p001234")]);
+        // nothing matched and an error occurred: Unavail, not "absent"
+        assert_eq!(proposal_dirs(1235, root), Err(Fail::Unavail));
+        std::fs::set_permissions(t.join("AAA"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        let _ = std::fs::remove_dir_all(&t);
     }
 }
