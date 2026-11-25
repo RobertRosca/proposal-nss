@@ -265,14 +265,13 @@ mod tests {
 
     #[test]
     fn proposal_dirs_distinguishes_absent_from_error() {
-        let t = std::env::temp_dir().join(format!("proposal-nss-unit-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&t);
+        let tmp = tempfile::tempdir().unwrap();
+        let t = tmp.path();
         std::fs::create_dir_all(t.join("FXE/202230/p001234")).unwrap();
         let root = t.to_str().unwrap();
         assert_eq!(proposal_dirs(1234, root).unwrap(), vec![t.join("FXE/202230/p001234")]);
         assert_eq!(proposal_dirs(1235, root).unwrap(), Vec::<std::path::PathBuf>::new());
         assert_eq!(proposal_dirs(1234, t.join("absent").to_str().unwrap()).unwrap(), Vec::<std::path::PathBuf>::new());
-        let _ = std::fs::remove_dir_all(&t);
     }
 
     #[test]
@@ -282,8 +281,8 @@ mod tests {
             return;
         }
         use std::os::unix::fs::PermissionsExt;
-        let t = std::env::temp_dir().join(format!("proposal-nss-unit-sib-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&t);
+        let tmp = tempfile::tempdir().unwrap();
+        let t = tmp.path();
         std::fs::create_dir_all(t.join("FXE/202230/p001234")).unwrap();
         std::fs::create_dir_all(t.join("AAA/202230")).unwrap();
         std::fs::set_permissions(t.join("AAA"), std::fs::Permissions::from_mode(0o000)).unwrap();
@@ -291,7 +290,7 @@ mod tests {
         assert_eq!(proposal_dirs(1234, root).unwrap(), vec![t.join("FXE/202230/p001234")]);
         // nothing matched and an error occurred: Unavail, not "absent"
         assert_eq!(proposal_dirs(1235, root), Err(Fail::Unavail));
+        // TempDir cannot remove the contents of a mode-000 dir
         std::fs::set_permissions(t.join("AAA"), std::fs::Permissions::from_mode(0o755)).unwrap();
-        let _ = std::fs::remove_dir_all(&t);
     }
 }
