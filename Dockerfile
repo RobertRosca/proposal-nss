@@ -39,6 +39,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked <<EOT
 set -euo pipefail
 cargo build --release
 cargo test --release --no-run
+# test-conf module for the nss tests (test/build-module.sh, run again as a no-op by nextest)
+cargo build --lib --features test-conf --target-dir target/test-conf
 install -m644 target/release/libnss_proposal.so /usr/lib/libnss_proposal.so.2
 install -m440 sudoers/proposal-spawner /etc/sudoers.d/proposal-spawner
 install -m644 etc/proposal-nss.conf /etc/proposal-nss.conf

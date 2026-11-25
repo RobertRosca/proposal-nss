@@ -1,10 +1,9 @@
 #!/bin/bash
 # nextest run-wrapper for the default (host) profile: runs a test binary in a throwaway user+mount
-# namespace where libnss_proposal.so is on LD_LIBRARY_PATH and nsswitch.conf/group are private
+# namespace where the test-conf build of libnss_proposal.so is on LD_LIBRARY_PATH and nsswitch.conf/group are private
 # bind mounts, so no root is needed and nothing on the host changes.
 set -euo pipefail
-bin=$1
-so=$(realpath -e "$(dirname "$bin")/../libnss_proposal.so") # cdylib sits next to deps/
+so=$(realpath -e "${CARGO_TARGET_DIR:-$(dirname "$0")/../target}/test-conf/debug/libnss_proposal.so") # test/build-module.sh
 t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
 mkdir "$t/lib"; ln -s "$so" "$t/lib/libnss_proposal.so.2"
 printf 'passwd: files proposal\ngroup: files proposal\n' > "$t/nsswitch.conf"
