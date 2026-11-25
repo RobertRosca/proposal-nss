@@ -44,7 +44,7 @@ install -m440 etc/sudoers.d/proposal-spawner /etc/sudoers.d/proposal-spawner
 install -m644 etc/proposal-nss.conf /etc/proposal-nss.conf
 # the container is head node too: proposal users without a dir must resolve (tests opt in to require_prop_dir)
 echo 'require_prop_dir = false' >> /etc/proposal-nss.conf
-install -m755 test/prod-prolog/*.sh /etc/slurm/
+install -m755 tests/fixtures/prod-prolog/*.sh /etc/slurm/
 sed -i -E 's/^(passwd|group):.*/& proposal/' /etc/nsswitch.conf
 EOT
 ENTRYPOINT ["cargo", "nextest", "run", "--profile", "ci", "--release"]

@@ -6,7 +6,7 @@ experimental = ["setup-scripts", "wrapper-scripts"]
 default-filter = 'not (binary(sudo) or binary(slurm) or binary(slurm_conf))'
 
 [scripts.wrapper.userns]
-command = 'test/in-userns.sh'
+command = 'tests/scripts/in-userns.sh'
 
 # cargo only builds the cdylib for `cargo build`, not for tests. The nss tests load this test-conf
 # build (conf path from PROPOSAL_NSS_CONF); its own target dir keeps the feature out of regular builds.
@@ -19,10 +19,10 @@ setup = 'build-module'
 run-wrapper = 'userns'
 
 [scripts.setup.nss-fixtures]
-command = 'test/setup-fixtures.sh'
+command = 'tests/scripts/setup-fixtures.sh'
 
 [scripts.setup.slurm]
-command = 'test/setup-slurm.sh'
+command = 'tests/scripts/setup-slurm.sh'
 slow-timeout = { period = "90s", terminate-after = 2 }
 leak-timeout = "1s" # the daemons outlive the script
 capture-stdout = true
@@ -31,7 +31,7 @@ capture-stderr = true
 # ci inherits default's script rules; the container is already isolated, so the nss binary only
 # needs the test-conf module on its library path
 [scripts.wrapper.test-module]
-command = 'test/with-test-module.sh'
+command = 'tests/scripts/with-test-module.sh'
 
 [[profile.ci.scripts]]
 filter = 'binary(nss)'
