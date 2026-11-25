@@ -97,16 +97,10 @@ fn sacctmgr_add_user(no: u32, account: &str) {
 const NO_ASSOC: &str = "Invalid account or account/partition combination specified";
 
 #[test]
-fn accounting_proposal_user_without_association_is_rejected() {
-    // observed: sbatch: error: Batch job submission failed: Invalid account or account/partition combination specified
-    let (accepted, err) = job("noassoc", &prop(1240), "debug", "true");
-    assert!(!accepted && err.contains(NO_ASSOC), "{err}");
-}
-
-#[test]
 fn accounting_association_makes_proposal_user_accepted_at_once() {
-    let (accepted, _) = job("pre-assoc", &prop(1241), "debug", "true");
-    assert!(!accepted);
+    // observed: sbatch: error: Batch job submission failed: Invalid account or account/partition combination specified
+    let (accepted, err) = job("pre-assoc", &prop(1241), "debug", "true");
+    assert!(!accepted && err.contains(NO_ASSOC), "{err}");
     sacctmgr_add_user(1241, "exfel");
     // observed: slurmdbd pushes the new association to slurmctld within ~15 ms, no retry needed
     let (accepted, err) = job("post-assoc", &prop(1241), "debug", "true");

@@ -26,7 +26,7 @@ pub fn job(name: &str, who: &[impl AsRef<OsStr>], partition: &str, cmd: &str) ->
     (o.status.success(), text)
 }
 
-/// uid of proposal `no` (see src/lib.rs: `60{no:06}2`); proposals 1240-1244 have fixture groups.
+/// uid of proposal `no` (see src/lib.rs: `60{no:06}2`); proposals 1241-1244 have fixture groups.
 pub fn uid(no: u32) -> String {
     format!("60{no:06}2")
 }
