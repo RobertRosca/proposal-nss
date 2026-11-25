@@ -62,7 +62,7 @@ Proposal users also need a Slurm association, see [association-provisioning.md](
 | File | Notes |
 |------|-------|
 | `/usr/lib64/libnss_proposal.so.2` | The NSS module. |
-| `/etc/proposal-nss.conf` | `%config(noreplace)`. Keys `primary_gid` and `supplementary_gid`, both required; optional `exp_dir` (default `/gpfs/exfel/exp`, see "Home directory") and `require_prop_dir` (default `true`, see "Require proposal directory"). Invalid or missing file means the module exposes no users; an unreadable one (e.g. EACCES) makes lookups return UNAVAIL. |
+| `/etc/proposal-nss.conf` | `%config(noreplace)`. Keys `primary_gid` and `supplementary_gid`, both required; optional `exp_dir` (default `/gpfs/exfel/exp`, see "Home directory") `require_prop_dir` (default `true`, see "Require proposal directory") and `home_fallback_dir` (default `/tmp`). Invalid or missing file means the module exposes no users; an unreadable one (e.g. EACCES) makes lookups return UNAVAIL. |
 | `/etc/sudoers.d/proposal-spawner` | `%config(noreplace)`, mode 0440. Validate with `visudo -cf` before deploying a modified copy. |
 
 ## Puppet sketch
@@ -86,8 +86,9 @@ No service to restart: the module reads the config on every lookup.
 encodes the proposal number, so the module scans `{exp_dir}/*/*/p{no:06}` on every passwd lookup
 (no cache; new proposals show up at once). If several proposal directories match, the
 lexicographically smallest path wins. If none match (or `exp_dir` is unreadable, e.g. GPFS not
-mounted) `pw_dir` is `/nonexistent`; the user itself stays visible, since existence is decided by
-the proposal group (only with `require_prop_dir = false`). The module never creates the directory.
+mounted) `pw_dir` is `{home_fallback_dir}/{user}`, e.g. `/tmp/euxfel-p001240`; the user itself stays
+visible, since existence is decided by the proposal group (only with `require_prop_dir = false`). The
+module never creates either directory; the Slurm prolog's `mkhomedir_helper` does.
 
 ### Lookup failures
 
@@ -107,7 +108,7 @@ and the module answers `NOTFOUND`. The `TRYAGAIN` mapping only applies when the 
 
 `require_prop_dir` is on by default, for hosts that mount the exp tree (the allocation nodes). A
 proposal user is then visible, to passwd and initgroups lookups alike, only while `{exp_dir}/*/*/p{no:06}` exists, so `sudo -u` and job launch fail for a proposal without a
-directory and `pw_dir` is never `/nonexistent`. Only that directory is required; the
+directory and `pw_dir` is never the fallback home. Only that directory is required; the
 `scratch/.exfl_prop_syn-home` home is created by `mkhomedir_helper`.
 
 Set `require_prop_dir = false` on hosts without the tree (head and login nodes). With it on there,
@@ -117,7 +118,7 @@ fails. On a host that has the option on, an unmounted exp tree hides all proposa
 Observed with Slurm 24.11.5 (tests in `tests/slurm_conf.rs`):
 
 - Directory missing at submit: `sbatch --uid` fails with `Invalid --uid specification` when
-  submitting from a host that has the option on; the prolog never runs, so no `/nonexistent` is created.
+  submitting from a host that has the option on; the prolog never runs, so no fallback home is created.
 - Directory missing at launch (or vanishes while the job is queued): slurmd cannot resolve the user,
   slurmctld requeues the job and holds it (`Reason=launch_failed_requeued_held`); the node stays idle.
   A held job does not run again by itself, even once the directory is back: `scontrol release <id>` it,
