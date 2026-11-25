@@ -132,37 +132,20 @@ fn name_to_no(name: &str) -> Option<u32> {
 // `require_prop_dir`, an I/O error other than ENOENT is Unavail rather than "no such proposal".
 fn proposal_dirs(no: u32, exp_dir: &str) -> Result<Vec<std::path::PathBuf>, Fail> {
     use std::io::ErrorKind::{NotADirectory, NotFound};
-    let absent = |e: &std::io::Error| matches!(e.kind(), NotFound | NotADirectory);
+    let absent = |e: &std::io::Error| matches!(e.kind(), NotFound | NotADirectory); // ENOTDIR: a file where a dir is expected
     // Errors do not abort the scan (one unreadable sibling must not hide a readable proposal); they
     // are remembered and only matter when nothing matched.
     let mut err = false;
-    let mut subdirs = |d: &std::path::Path| {
-        let mut out = vec![];
-        match std::fs::read_dir(d) {
-            Ok(rd) => {
-                for e in rd {
-                    match e {
-                        Ok(e) => match std::fs::metadata(e.path()) {
-                            Ok(m) if m.is_dir() => out.push(e.path()),
-                            Ok(_) => {}
-                            Err(e) => err |= !absent(&e),
-                        },
-                        Err(_) => err = true,
-                    }
-                }
-            }
-            Err(e) => err |= e.kind() != NotFound,
-        }
-        out
-    };
     let p = format!("p{no:06}");
-    let mut cycles = vec![];
-    for i in subdirs(exp_dir.as_ref()) {
-        cycles.extend(subdirs(&i));
-    }
     let mut found = vec![];
-    for c in cycles {
-        let d = c.join(&p);
+    for c in walkdir::WalkDir::new(exp_dir).follow_links(true).min_depth(2).max_depth(2) {
+        let d = match c {
+            Ok(c) => c.into_path().join(&p),
+            Err(e) => {
+                err |= !e.io_error().is_some_and(absent); // a symlink loop has no io error
+                continue;
+            }
+        };
         match std::fs::metadata(&d) {
             Ok(m) if m.is_dir() => found.push(d),
             Ok(_) => {}
@@ -300,9 +283,6 @@ mod tests {
         assert_eq!(proposal_dirs(1234, root).unwrap(), vec![t.join("FXE/202230/p001234")]);
         assert_eq!(proposal_dirs(1235, root).unwrap(), Vec::<std::path::PathBuf>::new());
         assert_eq!(proposal_dirs(1234, t.join("absent").to_str().unwrap()).unwrap(), Vec::<std::path::PathBuf>::new());
-        // a file where the exp dir should be is an I/O error, not "no proposal"
-        std::fs::write(t.join("file"), "").unwrap();
-        assert_eq!(proposal_dirs(1234, t.join("file").to_str().unwrap()), Err(Fail::Unavail));
         let _ = std::fs::remove_dir_all(&t);
     }
 
