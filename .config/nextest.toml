@@ -50,3 +50,11 @@ fail-fast = false
 
 [profile.ci.junit]
 path = "junit.xml"
+
+# nss tests that swap /etc/proposal-nss.conf must not overlap in a shared /etc (ci container)
+[test-groups.nss-conf]
+max-threads = 1
+
+[[profile.default.overrides]]
+filter = 'binary(nss)'
+test-group = 'nss-conf'

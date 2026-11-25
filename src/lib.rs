@@ -6,26 +6,29 @@ use libnss::passwd::{Passwd, PasswdHooks};
 use libnss::{libnss_initgroups_hooks, libnss_passwd_hooks};
 
 const CONF: &str = "/etc/proposal-nss.conf";
+const EXP_DIR: &str = "/gpfs/exfel/exp";
 
 struct Conf {
     primary_gid: u32,
     supp_gid: u32,
+    exp_dir: String,
 }
 
-// `key = value` lines, `#` comments. Both keys required, unknown keys rejected, so a
+// `key = value` lines, `#` comments. GID keys required, `exp_dir` optional, unknown keys rejected, so a
 // typo fails closed (no users) instead of silently handing out wrong groups.
 fn parse(text: &str) -> Option<Conf> {
-    let (mut primary, mut supp) = (None, None);
+    let (mut primary, mut supp, mut exp_dir) = (None, None, EXP_DIR.to_string());
     for line in text.lines().map(|l| l.split('#').next().unwrap_or("").trim()).filter(|l| !l.is_empty()) {
         let (k, v) = line.split_once('=')?;
-        let v = v.trim().parse().ok();
+        let v = v.trim();
         match k.trim() {
-            "primary_gid" => primary = Some(v?),
-            "supplementary_gid" => supp = Some(v?),
+            "primary_gid" => primary = Some(v.parse().ok()?),
+            "supplementary_gid" => supp = Some(v.parse().ok()?),
+            "exp_dir" if v.starts_with('/') => exp_dir = v.trim_end_matches('/').to_string(),
             _ => return None,
         }
     }
-    Some(Conf { primary_gid: primary?, supp_gid: supp? })
+    Some(Conf { primary_gid: primary?, supp_gid: supp?, exp_dir })
 }
 
 // Read per lookup: the file is tiny and this keeps Puppet changes live without a restart.
@@ -73,6 +76,28 @@ fn name_to_no(name: &str) -> Option<u32> {
     digits.parse().ok()
 }
 
+// Home = {exp_dir}/{instrument}/{cycle}/p{no:06}/scratch/.exfl_prop_syn-home. The uid only encodes
+// the proposal number, so find instrument/cycle by scanning {exp_dir}/*/*/p{no:06} (one readdir
+// per instrument; no caching, so new proposals appear immediately). Several matches (a proposal
+// moved between cycles/instruments) resolve to the lexicographically smallest path so the answer
+// is stable. No match, or any I/O error (GPFS unmounted, permissions): "/nonexistent". The user
+// is still returned (its existence is decided by the group, not the filesystem), and we never
+// panic or block on anything but readdir/stat.
+fn home(no: u32, exp_dir: &str) -> String {
+    let p = format!("p{no:06}");
+    let subdirs = |d: &std::path::Path| {
+        std::fs::read_dir(d).into_iter().flatten().flatten().filter(|e| e.path().is_dir()).map(|e| e.path()).collect::<Vec<_>>()
+    };
+    subdirs(exp_dir.as_ref())
+        .iter()
+        .flat_map(|i| subdirs(i))
+        .map(|c| c.join(&p))
+        .filter(|d| d.is_dir())
+        .min()
+        .and_then(|d| d.join("scratch/.exfl_prop_syn-home").to_str().map(String::from))
+        .unwrap_or_else(|| "/nonexistent".into())
+}
+
 fn passwd(no: u32, c: &Conf) -> Passwd {
     Passwd {
         name: format!("euxfel-p{no:06}"),
@@ -80,7 +105,7 @@ fn passwd(no: u32, c: &Conf) -> Passwd {
         uid: id_of(no),
         gid: c.primary_gid,
         gecos: format!("p{no:06} user"),
-        dir: "/nonexistent".into(), // unspecified, change if homes are needed
+        dir: home(no, &c.exp_dir),
         shell: "/sbin/nologin".into(),
     }
 }
@@ -137,6 +162,9 @@ mod tests {
         for bad in ["", "primary_gid=1", "primary_gid=1\nsupplementary_gid=x", "primary_gid=1\nsupplementary_gid=2\nfoo=3", "primary_gid=1\nsupplementary_gid"] {
             assert!(parse(bad).is_none(), "{bad:?}");
         }
+        assert_eq!(c.exp_dir, EXP_DIR);
+        assert_eq!(parse("primary_gid=1\nsupplementary_gid=2\nexp_dir = /x/y/ # c").unwrap().exp_dir, "/x/y");
+        assert!(parse("primary_gid=1\nsupplementary_gid=2\nexp_dir=rel").is_none());
         let p = passwd(900_511, &c);
         assert_eq!((p.name.as_str(), p.uid, p.gid), ("euxfel-p900511", 609_005_112, 15355));
         assert_eq!(p.gecos, "p900511 user");
