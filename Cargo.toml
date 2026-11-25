@@ -14,6 +14,7 @@ test-conf = []
 [dependencies]
 libnss = "0.9"
 libc = "0.2" # required by the libnss_*_hooks! macro expansions
+walkdir = "2.5"
 
 [dev-dependencies]
 rstest = { version = "0.29.0", default-features = false }
