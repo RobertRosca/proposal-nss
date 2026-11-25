@@ -45,6 +45,11 @@ install -Dm644 etc/proposal-nss.conf %{buildroot}%{_sysconfdir}/proposal-nss.con
 
 %check
 visudo -cf etc/sudoers.d/proposal-spawner
+# the test-conf feature must never reach a release build: sudo would read a user-chosen conf
+if grep -aq PROPOSAL_NSS_CONF target/release/libnss_proposal.so; then
+  echo "release .so contains the PROPOSAL_NSS_CONF lookup (test-conf feature enabled)" >&2
+  exit 1
+fi
 
 %files
 %doc docs/deployment.md
