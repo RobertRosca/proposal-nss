@@ -1,0 +1,47 @@
+name: rpm
+on:
+  push:
+  pull_request:
+jobs:
+  rpm:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packaging/Dockerfile.el9
+          target: rpms
+          outputs: type=local,dest=dist
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpms
+          path: dist/
+          if-no-files-found: error
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: rpm
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check tag matches Cargo.toml version
+        run: |
+          ver=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          [ "${GITHUB_REF_NAME#v}" = "$ver" ] || { echo "tag $GITHUB_REF_NAME != Cargo.toml $ver" >&2; exit 1; }
+      - uses: actions/download-artifact@v4
+        with:
+          name: rpms
+          path: dist
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/x86_64/proposal-nss-${GITHUB_REF_NAME#v}-1.el9.x86_64.rpm" \
+            "dist/srpms/proposal-nss-${GITHUB_REF_NAME#v}-1.el9.src.rpm" \
+            --generate-notes
