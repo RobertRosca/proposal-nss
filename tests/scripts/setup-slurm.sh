@@ -75,6 +75,7 @@ sacctmgr -i modify qos joblim set MaxJobsPerUser=1
 # Real users and one proposal user; the sacctmgr calls resolve names through NSS (incl. the module).
 sacctmgr -i add user otheruser xdamnprd euxfel-p001234 euxfel-p001237 euxfel-p001238 account=exfel
 sacctmgr -i add user outsider account=other
+sacctmgr -i add user euxfel-p001244 account=other
 slurmctld
 slurmd
 for _ in $(seq 30); do sinfo -h -o %T 2>/dev/null | grep -q idle && break; sleep 1; done

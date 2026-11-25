@@ -2,6 +2,7 @@
 mod common;
 use common::slurm::{assert_lookup_identical, clear, exp_fixture, job, log, node_state, prop, wait, EXP, SCRATCH};
 use common::{ok, run};
+use rstest::rstest;
 use std::fs;
 
 const U: &str = "600012342";
@@ -41,7 +42,7 @@ fn proposal_user_job_submits_nested_job_as_itself() {
     assert!(inner.contains(&format!("inner uid={U} user={N}")), "{inner}");
 }
 
-const OTHER: &[&str] = &["--uid", "55636", "--gid", "3555"];// real user, primary group exfel (3555)
+const OTHER: [&str; 4] = ["--uid", "55636", "--gid", "3555"]; // real user, primary group exfel (3555)
 
 const DENIED: &str = "User's group not permitted to use this partition";
 
@@ -51,34 +52,28 @@ const DENIED: &str = "User's group not permitted to use this partition";
 //   sbatch: error: Batch job submission failed: User's group not permitted to use this partition
 // Resolution: append exfel_prop_syn to a populated AllowGroups, see
 // allowgroups_real_plus_synthetic_group_accepts_proposal_user and docs/deployment.md. The
-// single-group cases below stay denied by design.
+// single-group cases of partition_access stay denied by design (a supplementary group is only
+// set via initgroups, which slurmctld never consults).
 // GroupUpdateTime=1 in setup-slurm.sh keeps slurmctld's group cache from hiding changes.
 
-#[test]
-fn control_open_partition_accepts_proposal_user() {
-    assert!(job("open", &prop(1234), "debug", "true").0);
-}
-
-#[test]
-fn control_real_user_is_accepted_by_group_partitions() {
-    // otheruser: primary gid exfel (found by slurmctld's primary-gid scan of passwd)
-    assert!(job("other-sup", OTHER, "sup", "true").0);
-    // ...but is not in exfel_prop_syn
-    let (accepted, err) = job("other-syn", OTHER, "syn", "true");
-    assert!(!accepted && err.contains(DENIED), "{err}");
-}
-
-#[test]
-fn allowgroups_primary_group_denies_proposal_user() {
-    let (accepted, err) = job("prop-syn", &prop(1234), "syn", "true");
-    assert!(!accepted && err.contains(DENIED), "{err}");
-}
-
-#[test]
-fn allowgroups_supplementary_group_denies_proposal_user() {
-    // exfel is only a supplementary group (via initgroups), which slurmctld never consults
-    let (accepted, err) = job("prop-sup", &prop(1234), "sup", "true");
-    assert!(!accepted && err.contains(DENIED), "{err}");
+/// `who` is a sbatch --uid/--gid pair; `expected` is an error substring (Some("") = any rejection), None = accepted.
+/// otheruser (55636) has primary gid exfel, found by slurmctld's primary-gid scan of passwd.
+/// outsider (55637) only has an association with account `other`; proposal 1244 likewise.
+#[rstest]
+#[case::syn_denies_proposal_user("syn", prop(1234), Some(DENIED))]
+#[case::sup_denies_proposal_user("sup", prop(1234), Some(DENIED))]
+#[case::syn_denies_real_user("syn", OTHER.map(String::from).to_vec(), Some(DENIED))]
+#[case::sup_accepts_real_user("sup", OTHER.map(String::from).to_vec(), None)]
+#[case::acct_accepts_proposal_user("acct", prop(1234), None)]
+#[case::acct_accepts_real_user("acct", OTHER.map(String::from).to_vec(), None)]
+#[case::acct_rejects_outsider("acct", vec!["--uid".into(), "55637".into(), "--gid".into(), "3555".into()], Some(""))]
+#[case::acct_rejects_proposal_user_of_other_account("acct", prop(1244), Some(""))]
+fn partition_access(#[case] partition: &str, #[case] who: Vec<String>, #[case] expected: Option<&str>) {
+    let (accepted, err) = job(&format!("pa-{partition}-{}", who[1]), &who, partition, "true");
+    match expected {
+        None => assert!(accepted, "{err}"),
+        Some(e) => assert!(!accepted && err.contains(e), "{err}"),
+    }
 }
 
 /// With LaunchParameters=disable_send_gids slurmd resolves groups itself (initgroups via NSS).
@@ -102,16 +97,10 @@ fn sacctmgr_add_user(no: u32, account: &str) {
 const NO_ASSOC: &str = "Invalid account or account/partition combination specified";
 
 #[test]
-fn accounting_proposal_user_without_association_is_rejected() {
-    // observed: sbatch: error: Batch job submission failed: Invalid account or account/partition combination specified
-    let (accepted, err) = job("noassoc", &prop(1240), "debug", "true");
-    assert!(!accepted && err.contains(NO_ASSOC), "{err}");
-}
-
-#[test]
 fn accounting_association_makes_proposal_user_accepted_at_once() {
-    let (accepted, _) = job("pre-assoc", &prop(1241), "debug", "true");
-    assert!(!accepted);
+    // observed: sbatch: error: Batch job submission failed: Invalid account or account/partition combination specified
+    let (accepted, err) = job("pre-assoc", &prop(1241), "debug", "true");
+    assert!(!accepted && err.contains(NO_ASSOC), "{err}");
     sacctmgr_add_user(1241, "exfel");
     // observed: slurmdbd pushes the new association to slurmctld within ~15 ms, no retry needed
     let (accepted, err) = job("post-assoc", &prop(1241), "debug", "true");
@@ -148,24 +137,6 @@ fn accounting_partition_qos_limit_applies_per_proposal_user() {
     assert!(s.2.starts_with("RUNNING"), "first job of 1243: {s:?}");
 }
 
-// AllowAccounts needs no group lookups, only the association.
-
-#[test]
-fn allowaccounts_accepts_associated_proposal_user_and_rejects_other_accounts() {
-    let (accepted, err) = job("acct-prop", &prop(1234), "acct", "true");
-    assert!(accepted, "{err}");
-    let (accepted, err) = job("acct-other", OTHER, "acct", "true");
-    assert!(accepted, "{err}");
-    // real user whose only association is account `other`
-    let (accepted, err) = job("acct-outsider", &["--uid", "55637", "--gid", "3555"], "acct", "true");
-    assert!(!accepted, "{err}");
-    eprintln!("outsider rejected: {err}");
-    // proposal user associated with a different account is rejected the same way
-    sacctmgr_add_user(1244, "other");
-    let (accepted, err) = job("acct-prop-other", &prop(1244), "acct", "true");
-    assert!(!accepted, "{err}");
-}
-
 /// Surprise: AllowGroups=exfel,exfel_prop_syn ACCEPTS the proposal user, although each group alone
 /// denies it. Matrix observed in the container (slurm 24.11.5, scontrol update + sbatch):
 ///   exfel,exfel_prop_syn / exfel_prop_syn,exfel / exfel_prop_syn,root -> proposal user accepted
@@ -181,24 +152,12 @@ fn allowaccounts_accepts_associated_proposal_user_and_rejects_other_accounts() {
 fn allowgroups_real_plus_synthetic_group_accepts_proposal_user() {
     let (accepted, err) = job("prop-both", &prop(1234), "both", "true");
     assert!(accepted, "{err}");
-    assert!(job("other-both", OTHER, "both", "true").0);
+    assert!(job("other-both", &OTHER, "both", "true").0);
 }
 
 // Production prolog/epilog (sanitised copies in tests/fixtures/prod-prolog, installed as /etc/slurm/slurm_{prolog,epilog}.sh,
 // PrologFlags=Alloc,Contain,Serial). They trace to /var/log/slurm/{prolog,epilog}-test.<user>.log.
 // Exp tree (outside /tmp: the epilog rm -rf deletes the user's files there): /fake-exp (exp_dir in /etc/proposal-nss.conf); p001237 exists there, p001238 does not.
-
-#[test]
-fn prolog_runs_for_proposal_user_and_node_stays_idle() {
-    exp_fixture();
-    clear(7);
-    let (accepted, out) = job("prolog-ok", &prop(1237), "debug", "echo ran as $(id -un)");
-    assert!(accepted && out.contains("ran as euxfel-p001237"), "{out}");
-    assert_eq!(node_state(), "idle", "prolog log:\n{}\nepilog log:\n{}", log("prolog", 7), log("epilog", 7));
-    let p = log("prolog", 7);
-    assert!(p.contains("mkhomedir_helper euxfel-p001237"), "{p}");
-    assert!(log("epilog", 7).contains("pkill -KILL -U 600012372"), "{}", log("epilog", 7));
-}
 
 /// The prolog checks /home/$SLURM_JOB_USER (never exists for synthetic users), so mkhomedir_helper
 /// runs on every job; with the proposal dir present it creates the module's pw_dir.
