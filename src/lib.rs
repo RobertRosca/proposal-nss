@@ -76,22 +76,11 @@ fn id_to_no(id: u32) -> Option<u32> {
 // A getgrgid_r failure (sssd/LDAP EAGAIN/EIO, ERANGE at the cap) is TryAgain; POSIX also lets
 // ENOENT/ESRCH/EBADF/EPERM mean "no such group".
 fn exists(no: u32) -> Result<bool, Fail> {
-    let mut grp: libc::group = unsafe { std::mem::zeroed() };
-    let mut res: *mut libc::group = std::ptr::null_mut();
-    let mut buf = vec![0u8; 1024];
-    loop {
-        let rc = unsafe {
-            libc::getgrgid_r(id_of(no), &mut grp, buf.as_mut_ptr().cast(), buf.len(), &mut res)
-        };
-        if rc == libc::ERANGE && buf.len() < 1 << 20 {
-            buf.resize(buf.len() * 2, 0);
-            continue;
-        }
-        return match rc {
-            0 => Ok(!res.is_null()),
-            libc::ENOENT | libc::ESRCH | libc::EBADF | libc::EPERM => Ok(false),
-            _ => Err(Fail::TryAgain),
-        };
+    use nix::errno::Errno::{EBADF, ENOENT, EPERM, ESRCH};
+    match nix::unistd::Group::from_gid(id_of(no).into()) {
+        Ok(g) => Ok(g.is_some()),
+        Err(ENOENT | ESRCH | EBADF | EPERM) => Ok(false),
+        Err(_) => Err(Fail::TryAgain),
     }
 }
 
@@ -184,15 +173,15 @@ fn member(gid: u32) -> Group {
 // leaking), so set it here: EAGAIN for TryAgain (never ERANGE, which means "grow the buffer"), EIO
 // for Unavail. initgroups overwrites it with ENOENT in the libnss glue (initgroups.rs:37,45).
 fn found<T>(v: Result<Option<T>, Fail>) -> Response<T> {
-    let set = |e| unsafe { *libc::__errno_location() = e };
+    use nix::errno::Errno;
     match v {
         Ok(v) => v.map_or(Response::NotFound, Response::Success),
         Err(Fail::TryAgain) => {
-            set(libc::EAGAIN);
+            Errno::EAGAIN.set();
             Response::TryAgain
         }
         Err(Fail::Unavail) => {
-            set(libc::EIO);
+            Errno::EIO.set();
             Response::Unavail
         }
     }
@@ -267,11 +256,11 @@ mod tests {
     fn failures_map_to_status() {
         assert_eq!(found(Ok(None::<u32>)), Response::NotFound);
         assert_eq!(found(Ok(Some(1))), Response::Success(1));
-        let errno = || unsafe { *libc::__errno_location() };
+        use nix::errno::Errno;
         assert_eq!(found::<u32>(Err(Fail::Unavail)), Response::Unavail);
-        assert_eq!(errno(), libc::EIO);
+        assert_eq!(Errno::last(), Errno::EIO);
         assert_eq!(found::<u32>(Err(Fail::TryAgain)), Response::TryAgain);
-        assert_eq!(errno(), libc::EAGAIN);
+        assert_eq!(Errno::last(), Errno::EAGAIN);
     }
 
     #[test]
@@ -289,7 +278,7 @@ mod tests {
     #[test]
     fn proposal_dirs_survives_unreadable_sibling() {
         // root bypasses mode 000 (container tier runs unit tests as root), so nothing to test there
-        if unsafe { libc::geteuid() } == 0 {
+        if nix::unistd::geteuid().is_root() {
             return;
         }
         use std::os::unix::fs::PermissionsExt;
