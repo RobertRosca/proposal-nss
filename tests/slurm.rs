@@ -182,14 +182,21 @@ fn passwd_lookup_identical_for_root_slurm_and_non_member() {
     assert_lookup_identical();
 }
 
-/// Observed: pw_dir=/nonexistent and mkhomedir_helper creates it at the container root (junk dir).
+/// Without a proposal dir pw_dir is the per-user fallback /tmp/euxfel-p001238: mkhomedir_helper
+/// creates it for that user only (no shared /nonexistent), and the epilog's /tmp cleanup removes it
+/// once the user's last job on the node ends.
 #[test]
-fn prolog_mkhomedir_creates_nonexistent_junk_dir_without_proposal_dir() {
+fn prolog_mkhomedir_creates_per_user_fallback_home_without_proposal_dir() {
+    let home = "/tmp/euxfel-p001238";
     let _ = fs::remove_dir_all("/nonexistent");
+    let _ = fs::remove_dir_all(home);
     clear(8);
-    assert!(job("prolog-junk", &prop(1238), "debug", "true").0);
+    let cmd = "h=$(getent passwd $(id -u) | cut -d: -f6); echo home=$h; test -d $h -a -w $h && echo writable";
+    let (accepted, out) = job("prolog-fallback", &prop(1238), "debug", cmd);
+    assert!(accepted && out.contains(&format!("home={home}\nwritable")), "{out}\nprolog log:\n{}", log("prolog", 8));
     assert_eq!(node_state(), "idle", "{}", log("prolog", 8));
-    assert!(std::path::Path::new("/nonexistent").exists(), "prolog log:\n{}", log("prolog", 8));
+    assert!(!std::path::Path::new("/nonexistent").exists());
+    assert!(!std::path::Path::new(home).exists(), "epilog left {home}:\n{}", log("epilog", 8));
 }
 
 /// Epilog: pkill -KILL -U $SLURM_UID and find -user $SLURM_UID rm -rf work with the synthetic uid.

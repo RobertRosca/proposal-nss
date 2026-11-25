@@ -7,18 +7,21 @@ use libnss::{libnss_initgroups_hooks, libnss_passwd_hooks};
 
 const CONF: &str = "/etc/proposal-nss.conf";
 const EXP_DIR: &str = "/gpfs/exfel/exp";
+const HOME_FALLBACK_DIR: &str = "/tmp";
 
 struct Conf {
     primary_gid: u32,
     supp_gid: u32,
     exp_dir: String,
     require_prop_dir: bool,
+    home_fallback_dir: String,
 }
 
-// `key = value` lines, `#` comments. GID keys required, `exp_dir` and `require_prop_dir` optional, unknown keys rejected, so a
+// `key = value` lines, `#` comments. GID keys required, `exp_dir`, `require_prop_dir` and `home_fallback_dir` optional, unknown keys rejected, so a
 // typo fails closed (no users) instead of silently handing out wrong groups.
 fn parse(text: &str) -> Option<Conf> {
     let (mut primary, mut supp, mut exp_dir, mut require) = (None, None, EXP_DIR.to_string(), true);
+    let mut fallback = HOME_FALLBACK_DIR.to_string();
     for line in text.lines().map(|l| l.split('#').next().unwrap_or("").trim()).filter(|l| !l.is_empty()) {
         let (k, v) = line.split_once('=')?;
         let v = v.trim();
@@ -27,10 +30,11 @@ fn parse(text: &str) -> Option<Conf> {
             "supplementary_gid" => supp = Some(v.parse().ok()?),
             "exp_dir" if v.starts_with('/') => exp_dir = v.trim_end_matches('/').to_string(),
             "require_prop_dir" => require = v.parse().ok()?,
+            "home_fallback_dir" if v.starts_with('/') => fallback = v.trim_end_matches('/').to_string(),
             _ => return None,
         }
     }
-    Some(Conf { primary_gid: primary?, supp_gid: supp?, exp_dir, require_prop_dir: require })
+    Some(Conf { primary_gid: primary?, supp_gid: supp?, exp_dir, require_prop_dir: require, home_fallback_dir: fallback })
 }
 
 // Why a lookup could not be answered; NotFound is reserved for "answered: absent", so Slurm holds
@@ -115,7 +119,7 @@ fn name_to_no(name: &str) -> Option<u32> {
 // the proposal number, so find instrument/cycle by scanning {exp_dir}/*/*/p{no:06} (one readdir
 // per instrument; no caching, so new proposals appear immediately). Several matches (a proposal
 // moved between cycles/instruments) resolve to the lexicographically smallest path so the answer
-// is stable. No match, or any I/O error (GPFS unmounted, permissions): "/nonexistent". With
+// is stable. No match, or any I/O error (GPFS unmounted, permissions): {home_fallback_dir}/{name}. With
 // `require_prop_dir = false` the user is still returned (its existence is decided by the group, not
 // the filesystem), and we never panic or block on anything but readdir/stat. With
 // `require_prop_dir`, an I/O error other than ENOENT is Unavail rather than "no such proposal".
@@ -144,21 +148,24 @@ fn proposal_dirs(no: u32, exp_dir: &str) -> Result<Vec<std::path::PathBuf>, Fail
     if found.is_empty() && err { Err(Fail::Unavail) } else { Ok(found) }
 }
 
-fn home(dirs: Vec<std::path::PathBuf>) -> String {
+// Without a proposal dir each user gets its own {home_fallback_dir}/{name} (default /tmp), so
+// mkhomedir_helper never creates one shared, wrongly owned home such as /nonexistent.
+fn home(dirs: Vec<std::path::PathBuf>, name: &str, c: &Conf) -> String {
     dirs.into_iter()
         .min()
         .and_then(|d| d.join("scratch/.exfl_prop_syn-home").to_str().map(String::from))
-        .unwrap_or_else(|| "/nonexistent".into())
+        .unwrap_or_else(|| format!("{}/{name}", c.home_fallback_dir))
 }
 
 fn passwd(no: u32, c: &Conf, dirs: Vec<std::path::PathBuf>) -> Passwd {
+    let name = format!("euxfel-p{no:06}");
     Passwd {
-        name: format!("euxfel-p{no:06}"),
+        dir: home(dirs, &name, c),
+        name,
         passwd: "*".into(), // locked; "x" makes pam_unix look up a shadow entry we don't provide
         uid: id_of(no),
         gid: c.primary_gid,
         gecos: format!("p{no:06} user"),
-        dir: home(dirs),
         shell: "/sbin/nologin".into(),
     }
 }
@@ -246,6 +253,13 @@ mod tests {
         let p = passwd(900_511, &c, vec![]);
         assert_eq!((p.name.as_str(), p.uid, p.gid), ("euxfel-p900511", 609_005_112, 15355));
         assert_eq!(p.gecos, "p900511 user");
+        // no proposal dir: per-user home under home_fallback_dir (default /tmp, overridable, absolute only)
+        assert_eq!(p.dir, "/tmp/euxfel-p900511");
+        let o = parse("primary_gid=1\nsupplementary_gid=2\nhome_fallback_dir = /scratch/fb/ # c").unwrap();
+        assert_eq!(passwd(900_511, &o, vec![]).dir, "/scratch/fb/euxfel-p900511");
+        assert!(parse("primary_gid=1\nsupplementary_gid=2\nhome_fallback_dir=tmp").is_none());
+        let d = std::path::PathBuf::from("/x/FXE/202201/p900511");
+        assert_eq!(passwd(900_511, &o, vec![d]).dir, "/x/FXE/202201/p900511/scratch/.exfl_prop_syn-home");
         assert_eq!(name_to_no(&p.name), Some(900_511));
         for bad in ["euxfel-p1234", "euxfel-p1000000", "euxfel-p+12345", "euxfel-p00123x", "root"] {
             assert_eq!(name_to_no(bad), None, "{bad}");

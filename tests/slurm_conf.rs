@@ -10,15 +10,15 @@ use std::fs;
 // because proposal users without a dir vanish. Conf-changing slurm tests belong here, not in slurm.rs.
 
 /// With require_prop_dir the proposal user does not resolve without its dir: sbatch rejects the job
-/// at submit time and the prolog never runs, so no junk /nonexistent.
+/// at submit time and the prolog never runs, so no fallback home is created.
 #[test]
 fn require_prop_dir_rejects_job_for_proposal_without_dir() {
     let _g = require_prop_dir();
-    let _ = fs::remove_dir_all("/nonexistent");
+    let _ = fs::remove_dir_all("/tmp/euxfel-p001238");
     clear(8);
     let (accepted, err) = job("req-nodir", &prop(1238), "debug", "true");
     assert!(!accepted && err.contains("Invalid --uid specification"), "{err}");
-    assert!(!std::path::Path::new("/nonexistent").exists());
+    assert!(!std::path::Path::new("/tmp/euxfel-p001238").exists());
     assert!(log("prolog", 8).is_empty(), "{}", log("prolog", 8));
     assert_eq!(node_state(), "idle");
 }

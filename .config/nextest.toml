@@ -58,7 +58,7 @@ threads-required = 'num-cpus'
 [profile.ci.junit]
 path = "junit.xml"
 
-# prolog tests share the node, its /nonexistent and the prolog logs
+# prolog tests share the node, the fallback homes in /tmp and the prolog logs
 [test-groups.prolog]
 max-threads = 1
 
