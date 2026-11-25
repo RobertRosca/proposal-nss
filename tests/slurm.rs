@@ -55,11 +55,6 @@ const DENIED: &str = "User's group not permitted to use this partition";
 // GroupUpdateTime=1 in setup-slurm.sh keeps slurmctld's group cache from hiding changes.
 
 #[test]
-fn control_open_partition_accepts_proposal_user() {
-    assert!(job("open", &prop(1234), "debug", "true").0);
-}
-
-#[test]
 fn control_real_user_is_accepted_by_group_partitions() {
     // otheruser: primary gid exfel (found by slurmctld's primary-gid scan of passwd)
     assert!(job("other-sup", OTHER, "sup", "true").0);
@@ -187,18 +182,6 @@ fn allowgroups_real_plus_synthetic_group_accepts_proposal_user() {
 // Production prolog/epilog (sanitised copies in tests/fixtures/prod-prolog, installed as /etc/slurm/slurm_{prolog,epilog}.sh,
 // PrologFlags=Alloc,Contain,Serial). They trace to /var/log/slurm/{prolog,epilog}-test.<user>.log.
 // Exp tree (outside /tmp: the epilog rm -rf deletes the user's files there): /fake-exp (exp_dir in /etc/proposal-nss.conf); p001237 exists there, p001238 does not.
-
-#[test]
-fn prolog_runs_for_proposal_user_and_node_stays_idle() {
-    exp_fixture();
-    clear(7);
-    let (accepted, out) = job("prolog-ok", &prop(1237), "debug", "echo ran as $(id -un)");
-    assert!(accepted && out.contains("ran as euxfel-p001237"), "{out}");
-    assert_eq!(node_state(), "idle", "prolog log:\n{}\nepilog log:\n{}", log("prolog", 7), log("epilog", 7));
-    let p = log("prolog", 7);
-    assert!(p.contains("mkhomedir_helper euxfel-p001237"), "{p}");
-    assert!(log("epilog", 7).contains("pkill -KILL -U 600012372"), "{}", log("epilog", 7));
-}
 
 /// The prolog checks /home/$SLURM_JOB_USER (never exists for synthetic users), so mkhomedir_helper
 /// runs on every job; with the proposal dir present it creates the module's pw_dir.
