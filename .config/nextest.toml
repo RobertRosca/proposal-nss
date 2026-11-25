@@ -22,7 +22,7 @@ command = 'test/setup-fixtures.sh'
 
 [scripts.setup.slurm]
 command = 'test/setup-slurm.sh'
-slow-timeout = { period = "45s", terminate-after = 2 }
+slow-timeout = { period = "90s", terminate-after = 2 }
 leak-timeout = "1s" # the daemons outlive the script
 capture-stdout = true
 capture-stderr = true
@@ -56,5 +56,5 @@ path = "junit.xml"
 max-threads = 1
 
 [[profile.default.overrides]]
-filter = 'binary(nss)'
+filter = 'binary(nss) or test(/^prolog_/)'
 test-group = 'nss-conf'
