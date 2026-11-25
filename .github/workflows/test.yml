@@ -5,6 +5,11 @@ on:
     branches: [main]
     tags: ['v*']
   pull_request:
+# one run per PR: newer runs cancel older ones (stack pushes fire several events per PR); main and
+# tag pushes queue instead, so every commit there gets a full run
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   host:
     # pinned: the AppArmor userns workaround below is specific to this image version
