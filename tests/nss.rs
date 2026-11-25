@@ -1,6 +1,8 @@
 // Needs the module installed in nsswitch plus the external group fixtures; see tests/scripts/in-userns.sh and Dockerfile.
 mod common;
 use common::{fails, ok};
+use nix::errno::Errno;
+use nix::unistd::User;
 use rstest::rstest;
 
 const U: &str = "600012342";
@@ -142,32 +144,22 @@ impl Drop for BadConf {
     }
 }
 
-/// (getpwnam_r return code, no entry returned)
-fn getpwnam_rc(name: &str) -> (i32, bool) {
-    let n = std::ffi::CString::new(name).unwrap();
-    let mut pw: libc::passwd = unsafe { std::mem::zeroed() };
-    let mut res = std::ptr::null_mut();
-    let mut buf = vec![0 as libc::c_char; 4096];
-    let rc = unsafe { libc::getpwnam_r(n.as_ptr(), &mut pw, buf.as_mut_ptr(), buf.len(), &mut res) };
-    (rc, res.is_null())
-}
-
 #[test]
 fn missing_conf_is_a_miss() {
     let _c = BadConf::missing();
-    assert_eq!(getpwnam_rc(N), (0, true));
+    assert_eq!(User::from_name(N), Ok(None));
 }
 
 #[test]
 fn unreadable_conf_is_unavailable_not_absent() {
     let _c = BadConf::unreadable();
-    assert_eq!(getpwnam_rc(N), (libc::EIO, true));
+    assert_eq!(User::from_name(N), Err(Errno::EIO));
 }
 
 #[test]
 fn non_proposal_names_do_not_read_conf() {
     let _c = BadConf::unreadable();
     for k in ["nosuchuser", "euxfel-p1234", "euxfel-p00123x"] {
-        assert_eq!(getpwnam_rc(k), (0, true), "{k}");
+        assert_eq!(User::from_name(k), Ok(None), "{k}");
     }
 }
