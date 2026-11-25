@@ -1,6 +1,7 @@
 // Needs the module installed in nsswitch plus the external group fixtures; see tests/scripts/in-userns.sh and Dockerfile.
 mod common;
 use common::{fails, ok};
+use rstest::rstest;
 
 const U: &str = "600012342";
 const N: &str = "euxfel-p001234";
@@ -13,7 +14,7 @@ const HOME: &str = ".exfl_prop_syn-home";
 struct FakeExp(std::path::PathBuf, std::path::PathBuf);
 
 impl FakeExp {
-    fn new(name: &str, dirs: &[&str]) -> Self {
+    fn new(name: &str, dirs: &[&str], require: bool) -> Self {
         let root = std::env::temp_dir().join(format!("proposal-nss-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         for d in dirs {
@@ -21,14 +22,10 @@ impl FakeExp {
         }
         let conf = root.with_extension("conf");
         let base = std::fs::read_to_string(CONF).unwrap();
-        std::fs::write(&conf, format!("{base}\nexp_dir = {}\n", root.display())).unwrap();
+        std::fs::write(&conf, format!("{base}\nexp_dir = {}\nrequire_prop_dir = {require}\n", root.display())).unwrap();
         // SAFETY: nextest runs each test in its own process and nothing else reads the env concurrently.
         unsafe { std::env::set_var("PROPOSAL_NSS_CONF", &conf) };
         Self(root, conf)
-    }
-    fn require(&self) {
-        let cur = std::fs::read_to_string(&self.1).unwrap();
-        std::fs::write(&self.1, format!("{cur}require_prop_dir = true\n")).unwrap();
     }
     fn home(&self, rel: &str) -> String {
         format!("{}/{rel}/scratch/{HOME}", self.0.display())
@@ -72,64 +69,45 @@ fn no_proposal_group_means_no_user() {
     fails("id", &["euxfel-p001235"]);
 }
 
-#[test]
-fn home_resolved_from_instrument_and_cycle() {
-    // other proposals' dirs and plain files must not confuse the glob
-    let t = FakeExp::new("one", &["FXE/202230/p001234", "FXE/202230/p001235", "SPB/202230/p009999"]);
+enum Want {
+    Home(&'static str),
+    Nonexistent,
+    Absent,
+}
+
+// The fixture conf sets require_prop_dir = false; `require` overrides it. Proposal 1235 has no external group.
+#[rstest]
+// other proposals' dirs and plain files must not confuse the glob
+#[case::home_from_instrument_and_cycle(&["FXE/202230/p001234", "FXE/202230/p001235", "SPB/202230/p009999"], false, 1234, Want::Home("FXE/202230/p001234"))]
+#[case::multiple_matches_pick_smallest_path(&["SPB/202201/p001234", "FXE/202230/p001234", "FXE/202101/p001234"], false, 1234, Want::Home("FXE/202101/p001234"))]
+#[case::missing_dir_falls_back_without_require(&["FXE/202230/p001235"], false, 1234, Want::Nonexistent)]
+#[case::require_hides_user_without_dir(&["FXE/202230/p001235"], true, 1234, Want::Absent)]
+#[case::require_keeps_user_with_dir(&["FXE/202230/p001234"], true, 1234, Want::Home("FXE/202230/p001234"))]
+#[case::require_still_needs_group(&["FXE/202230/p001235"], true, 1235, Want::Absent)]
+fn home_dir(#[case] dirs: &[&str], #[case] require: bool, #[case] no: u32, #[case] want: Want) {
+    let t = FakeExp::new("t", dirs, require);
+    std::fs::create_dir_all(t.0.join("FXE")).unwrap();
     std::fs::write(t.0.join("FXE/stray"), "").unwrap();
-    for k in [U, N] {
-        assert_eq!(dir_of(k), t.home("FXE/202230/p001234"));
+    let name = format!("euxfel-p{no:06}");
+    for k in [format!("60{no:06}2"), name.clone()] {
+        match &want {
+            Want::Home(rel) => assert_eq!(dir_of(&k), t.home(rel)),
+            Want::Nonexistent => assert_eq!(dir_of(&k), "/nonexistent"),
+            Want::Absent => fails("getent", &["passwd", &k]),
+        }
+    }
+    match want {
+        Want::Absent => fails("id", &[&name]),
+        _ => assert!(ok("id", &[&name]).contains("3555(exfel)")),
     }
 }
 
 #[test]
-fn multiple_matches_pick_smallest_path() {
-    let t = FakeExp::new("multi", &["SPB/202201/p001234", "FXE/202230/p001234", "FXE/202101/p001234"]);
-    assert_eq!(dir_of(N), t.home("FXE/202101/p001234"));
-}
-
-#[test]
-fn missing_proposal_dir_falls_back_but_user_stays_visible_without_require_prop_dir() {
-    // the fixture conf sets require_prop_dir = false
-    let t = FakeExp::new("missing", &["FXE/202230/p001235"]);
-    assert_eq!(dir_of(N), "/nonexistent");
-    drop(t);
-    // exp_dir absent (GPFS not mounted): same fallback
+fn missing_exp_dir_falls_back() {
+    // exp_dir absent (GPFS not mounted): same fallback as a missing proposal dir
+    let t = FakeExp::new("absent", &[], false);
+    assert!(!t.0.exists());
     assert_eq!(dir_of(U), "/nonexistent");
-}
-
-#[test]
-fn require_prop_dir_hides_user_without_proposal_dir() {
-    let t = FakeExp::new("req-missing", &["FXE/202230/p001235"]);
-    t.require();
-    for k in [U, N] {
-        fails("getent", &["passwd", k]);
-    }
-    fails("id", &[N]);
-}
-
-#[test]
-fn require_prop_dir_hides_user_when_exp_tree_is_empty() {
-    let t = FakeExp::new("req-empty", &[]);
-    t.require();
-    fails("getent", &["passwd", N]);
-}
-
-#[test]
-fn require_prop_dir_keeps_user_with_proposal_dir() {
-    let t = FakeExp::new("req-present", &["FXE/202230/p001234"]);
-    t.require();
-    for k in [U, N] {
-        assert_eq!(dir_of(k), t.home("FXE/202230/p001234"));
-    }
-    assert!(ok("id", &[N]).contains("3555(exfel)"));
-}
-
-#[test]
-fn require_prop_dir_still_needs_proposal_group() {
-    let t = FakeExp::new("req-nogroup", &["FXE/202230/p001235"]);
-    t.require();
-    fails("getent", &["passwd", "euxfel-p001235"]);
 }
 
 /// Points the module at a conf of the test's own that is missing, or a directory (read fails with
