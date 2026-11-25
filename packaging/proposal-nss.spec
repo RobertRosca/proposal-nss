@@ -40,11 +40,11 @@ cargo build --release --offline --frozen
 
 %install
 install -Dm755 target/release/libnss_proposal.so %{buildroot}%{_libdir}/libnss_proposal.so.2
-install -Dm440 sudoers/proposal-spawner %{buildroot}%{_sysconfdir}/sudoers.d/proposal-spawner
+install -Dm440 etc/sudoers.d/proposal-spawner %{buildroot}%{_sysconfdir}/sudoers.d/proposal-spawner
 install -Dm644 etc/proposal-nss.conf %{buildroot}%{_sysconfdir}/proposal-nss.conf
 
 %check
-visudo -cf sudoers/proposal-spawner
+visudo -cf etc/sudoers.d/proposal-spawner
 
 %files
 %doc docs/deployment.md
