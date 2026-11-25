@@ -96,7 +96,7 @@ every proposal user vanishes, so slurmctld and `sbatch` reject all jobs and the 
 fails. On a host that has the option on, an unmounted exp tree hides all proposal users.
 nscd's negative cache (default 20 s for passwd) delays a new proposal directory becoming usable.
 
-Observed with Slurm 24.11.5 (tests in `tests/slurm.rs`, `require_prop_dir_*`):
+Observed with Slurm 24.11.5 (tests in `tests/slurm_conf.rs`):
 
 - Directory missing at submit: `sbatch --uid` fails with `Invalid --uid specification` when
   submitting from a host that has the option on; the prolog never runs, so no `/nonexistent` is created.

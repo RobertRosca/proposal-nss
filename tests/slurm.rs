@@ -1,19 +1,11 @@
 // Needs a running single-node Slurm; see Dockerfile and .config/nextest.toml.
 mod common;
-use common::{ok, require_prop_dir, run};
-use std::ffi::OsStr;
+use common::slurm::{clear, job, log, node_state, prop, wait, EXP};
+use common::{ok, run};
 use std::fs;
 
 const U: &str = "600012342";
 const N: &str = "euxfel-p001234";
-
-/// Polls `f` once a second for up to `secs` seconds; true as soon as it returns true.
-fn wait(secs: u32, mut f: impl FnMut() -> bool) -> bool {
-    (0..secs).any(|_| f() || {
-        std::thread::sleep(std::time::Duration::from_secs(1));
-        false
-    })
-}
 
 #[test]
 fn proposal_user_job_submits_nested_job_as_itself() {
@@ -50,21 +42,6 @@ fn proposal_user_job_submits_nested_job_as_itself() {
 }
 
 const OTHER: &[&str] = &["--uid", "55636", "--gid", "3555"];// real user, primary group exfel (3555)
-
-/// Submits `--wrap cmd` as `who` to `partition`; returns (accepted, job output or sbatch stderr).
-fn job(name: &str, who: &[impl AsRef<OsStr>], partition: &str, cmd: &str) -> (bool, String) {
-    let out = format!("/tmp/slurm-{name}.out");
-    fs::write(&out, "").unwrap();
-    ok("chmod", &["666", &out]);
-    let o = std::process::Command::new("sbatch")
-        .args(["--wait", "--chdir", "/tmp", "--partition", partition, "--output", &out])
-        .args(who)
-        .args(["--wrap", cmd])
-        .output()
-        .unwrap();
-    let text = if o.status.success() { fs::read_to_string(&out).unwrap() } else { String::from_utf8_lossy(&o.stderr).into_owned() };
-    (o.status.success(), text)
-}
 
 const DENIED: &str = "User's group not permitted to use this partition";
 
@@ -116,15 +93,6 @@ fn proposal_user_job_gets_supplementary_groups() {
 // Accounting: the container runs slurmdbd with AccountingStorageEnforce=
 // associations,limits like production. setup-slurm.sh gives otheruser, xdamnprd and euxfel-p001234
 // an association in account `exfel`; `outsider` only has account `other`.
-
-/// uid of proposal `no` (see src/lib.rs: `60{no:06}2`); proposals 1240-1244 have fixture groups.
-fn uid(no: u32) -> String {
-    format!("60{no:06}2")
-}
-
-fn prop(no: u32) -> Vec<String> {
-    vec!["--uid".into(), uid(no), "--gid".into(), "15355".into()]
-}
 
 fn sacctmgr_add_user(no: u32, account: &str) {
     // sacctmgr resolves the synthetic name through the NSS module: this must work in the container
@@ -220,31 +188,6 @@ fn allowgroups_real_plus_synthetic_group_accepts_proposal_user() {
 // PrologFlags=Alloc,Contain,Serial). They trace to /var/log/slurm/{prolog,epilog}-test.<user>.log.
 // Exp tree (outside /tmp: the epilog rm -rf deletes the user's files there): /fake-exp (exp_dir in /etc/proposal-nss.conf); p001237 exists there, p001238 does not.
 
-const EXP: &str = "/fake-exp/FXE/202201/p001237";
-
-/// Trace of the prolog/epilog for `euxfel-p00123{n}` (n=7 or 8); `clear` it before the job under test.
-fn log(f: &str, n: u8) -> String {
-    fs::read_to_string(format!("/var/log/slurm/{f}-test.euxfel-p00123{n}.log")).unwrap_or_default()
-}
-
-fn clear(n: u8) {
-    for f in ["prolog", "epilog"] {
-        let _ = fs::remove_file(format!("/var/log/slurm/{f}-test.euxfel-p00123{n}.log"));
-    }
-}
-
-/// The epilog finishes after the job; the node must settle on idle, never drain.
-fn node_state() -> String {
-    let mut s = String::new();
-    wait(30, || {
-        let o = ok("sinfo", &["-h", "-N", "-o", "%T"]); // one line per partition
-        s = o.lines().next().unwrap().to_string();
-        assert!(o.lines().all(|l| l == s), "{o}");
-        s == "idle" || s.starts_with("drain")
-    });
-    s
-}
-
 #[test]
 fn prolog_runs_for_proposal_user_and_node_stays_idle() {
     fs::create_dir_all(format!("{EXP}/scratch")).unwrap();
@@ -279,89 +222,6 @@ fn prolog_mkhomedir_creates_nonexistent_junk_dir_without_proposal_dir() {
     assert!(job("prolog-junk", &prop(1238), "debug", "true").0);
     assert_eq!(node_state(), "idle", "{}", log("prolog", 8));
     assert!(std::path::Path::new("/nonexistent").exists(), "prolog log:\n{}", log("prolog", 8));
-}
-
-// require_prop_dir() switches the module on (the fixture conf turns it off) for the guard's lifetime. The single container is head and
-// compute node at once, so every daemon sees the setting; the tests using it are exclusive
-// (`threads-required` in .config/nextest.toml) because proposal users without a dir vanish.
-
-/// With require_prop_dir the proposal user does not resolve without its dir: sbatch rejects the job
-/// at submit time and the prolog never runs, so no junk /nonexistent.
-#[test]
-fn require_prop_dir_rejects_job_for_proposal_without_dir() {
-    let _g = require_prop_dir();
-    let _ = fs::remove_dir_all("/nonexistent");
-    clear(8);
-    let (accepted, err) = job("req-nodir", &prop(1238), "debug", "true");
-    assert!(!accepted && err.contains("Invalid --uid specification"), "{err}");
-    assert!(!std::path::Path::new("/nonexistent").exists());
-    assert!(log("prolog", 8).is_empty(), "{}", log("prolog", 8));
-    assert_eq!(node_state(), "idle");
-}
-
-#[test]
-fn require_prop_dir_accepts_job_for_proposal_with_dir() {
-    let _g = require_prop_dir();
-    fs::create_dir_all(format!("{EXP}/scratch")).unwrap();
-    let home = format!("{EXP}/scratch/.exfl_prop_syn-home");
-    let _ = fs::remove_dir_all(&home);
-    clear(7);
-    let (accepted, out) = job("req-dir", &prop(1237), "debug", "echo ran as $(id -un)");
-    assert!(accepted && out.contains("ran as euxfel-p001237"), "{out}");
-    assert_eq!(node_state(), "idle", "{}", log("prolog", 7));
-    assert!(std::path::Path::new(&home).is_dir(), "{home} missing");
-}
-
-fn job_field(id: &str, key: &str) -> String {
-    let out = ok("scontrol", &["show", "job", id]);
-    out.split_whitespace().find_map(|w| w.strip_prefix(&format!("{key}="))).unwrap_or_default().to_string()
-}
-
-/// The dir disappears while the job is queued (GPFS gone, proposal moved): slurmd cannot resolve
-/// the user at launch, the job is requeued once and held (launch_failed_requeued_held); there is no
-/// requeue loop and the node stays idle. Once the dir is back, `scontrol release` plus
-/// `scontrol update StartTime=now` (the requeue also sets a BeginTime delay) runs the job.
-#[test]
-fn require_prop_dir_holds_job_when_dir_vanishes_before_launch() {
-    fs::create_dir_all(format!("{EXP}/scratch")).unwrap();
-    clear(7);
-    // select/linear: the blocker owns the node, so the proposal job stays pending until it ends
-    ok("sbatch", &["--uid", "55636", "--gid", "3555", "--chdir", "/tmp", "--output", "/dev/null", "--wrap", "sleep 8"]);
-    let out = "/tmp/slurm-req-held.out";
-    fs::write(out, "").unwrap();
-    ok("chmod", &["666", out]);
-    let id = ok("sbatch", &["--parsable", "--chdir", "/tmp", "--output", out, "--uid", &uid(1237), "--gid", "15355", "--wrap", "echo ran as $(id -un)"]);
-    let id = id.trim().to_string();
-
-    let g = require_prop_dir();
-    fs::remove_dir_all("/fake-exp/FXE/202201/p001237").unwrap();
-    let mut reason = String::new();
-    wait(60, || {
-        reason = job_field(&id, "Reason");
-        reason == "launch_failed_requeued_held"
-    });
-    assert_eq!(reason, "launch_failed_requeued_held", "slurmd log:\n{}", fs::read_to_string("/var/log/slurm/slurmd.log").unwrap_or_default());
-    assert_eq!(job_field(&id, "JobState"), "PENDING");
-    assert_eq!(job_field(&id, "Restarts"), "1");
-    assert_eq!(node_state(), "idle");
-
-    // recovery: dir and config back, release the hold
-    drop(g);
-    fs::create_dir_all(format!("{EXP}/scratch")).unwrap();
-    // slurmd remembers the failed launch of this job id for a while ("already killed, do not
-    // launch batch job"): a release straight away fails the job with exit code 1; 25 s worked, 0 s did not
-    std::thread::sleep(std::time::Duration::from_secs(30));
-    ok("scontrol", &["release", &id]);
-    // the launch-failure requeue also defers the job (Reason=BeginTime); start it now
-    ok("scontrol", &["update", &format!("JobId={id}"), "StartTime=now"]);
-    let mut state = String::new();
-    wait(60, || {
-        state = job_field(&id, "JobState");
-        state == "COMPLETED"
-    });
-    assert_eq!(state, "COMPLETED", "{}", job_field(&id, "Reason"));
-    assert!(fs::read_to_string(out).unwrap().contains("ran as euxfel-p001237"));
-    assert_eq!(node_state(), "idle");
 }
 
 /// Epilog: pkill -KILL -U $SLURM_UID and find -user $SLURM_UID rm -rf work with the synthetic uid.

@@ -1,6 +1,8 @@
 #![allow(dead_code)] // each test binary uses a different subset
 use std::process::Command;
 
+pub mod slurm;
+
 /// Runs a command; returns (success, stdout) and prints full output context on assertion failure.
 pub fn run(cmd: &str, args: &[&str]) -> (bool, String) {
     let o = Command::new(cmd).args(args).output().unwrap_or_else(|e| panic!("spawn {cmd}: {e}"));
