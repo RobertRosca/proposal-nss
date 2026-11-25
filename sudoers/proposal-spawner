@@ -1,0 +1,4 @@
+# Only xdamnprd may switch to the synthetic proposal users. They all have primary gid
+# exfel_prop_syn, which sudo matches as a Runas group (user names do not take wildcards).
+# also matches any real member of exfel_prop_syn, keep that group free of real users.
+xdamnprd ALL=(%exfel_prop_syn) NOPASSWD: ALL
