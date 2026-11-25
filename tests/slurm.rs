@@ -184,7 +184,7 @@ fn allowgroups_real_plus_synthetic_group_accepts_proposal_user() {
     assert!(job("other-both", OTHER, "both", "true").0);
 }
 
-// Production prolog/epilog (sanitised copies in test/prod-prolog, installed as /etc/slurm/slurm_{prolog,epilog}.sh,
+// Production prolog/epilog (sanitised copies in tests/fixtures/prod-prolog, installed as /etc/slurm/slurm_{prolog,epilog}.sh,
 // PrologFlags=Alloc,Contain,Serial). They trace to /var/log/slurm/{prolog,epilog}-test.<user>.log.
 // Exp tree (outside /tmp: the epilog rm -rf deletes the user's files there): /fake-exp (exp_dir in /etc/proposal-nss.conf); p001237 exists there, p001238 does not.
 

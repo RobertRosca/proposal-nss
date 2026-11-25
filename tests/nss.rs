@@ -1,4 +1,4 @@
-// Needs the module installed in nsswitch plus the external group fixtures; see test/in-userns.sh and Dockerfile.
+// Needs the module installed in nsswitch plus the external group fixtures; see tests/scripts/in-userns.sh and Dockerfile.
 mod common;
 use common::{fails, ok};
 

@@ -21,7 +21,7 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
-      # test/in-userns.sh needs unprivileged user namespaces, blocked by AppArmor on 24.04
+      # tests/scripts/in-userns.sh needs unprivileged user namespaces, blocked by AppArmor on 24.04
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: cargo nextest run
   container:
