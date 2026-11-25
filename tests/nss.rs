@@ -20,14 +20,14 @@ impl FakeExp {
             std::fs::create_dir_all(root.join(d)).unwrap();
         }
         let old = std::fs::read_to_string(CONF).unwrap();
-        std::fs::write(CONF, format!("{old}
+        common::write_atomic(CONF, format!("{old}
 exp_dir = {}
 ", root.display())).unwrap();
         Self(root, old)
     }
     fn require(&self) {
         let cur = std::fs::read_to_string(CONF).unwrap();
-        std::fs::write(CONF, format!("{cur}require_prop_dir = true\n")).unwrap();
+        common::write_atomic(CONF, format!("{cur}require_prop_dir = true\n")).unwrap();
     }
     fn home(&self, rel: &str) -> String {
         format!("{}/{rel}/scratch/{HOME}", self.0.display())
@@ -36,7 +36,7 @@ exp_dir = {}
 
 impl Drop for FakeExp {
     fn drop(&mut self) {
-        let _ = std::fs::write(CONF, &self.1);
+        let _ = common::write_atomic(CONF, &self.1);
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }

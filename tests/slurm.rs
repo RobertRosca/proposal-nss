@@ -322,14 +322,14 @@ const CONF: &str = "/etc/proposal-nss.conf";
 impl RequirePropDir {
     fn new() -> Self {
         let old = fs::read_to_string(CONF).unwrap();
-        fs::write(CONF, format!("{old}\nrequire_prop_dir = true\n")).unwrap();
+        common::write_atomic(CONF, format!("{old}\nrequire_prop_dir = true\n")).unwrap();
         Self(old)
     }
 }
 
 impl Drop for RequirePropDir {
     fn drop(&mut self) {
-        fs::write(CONF, &self.0).unwrap();
+        common::write_atomic(CONF, &self.0).unwrap();
     }
 }
 
