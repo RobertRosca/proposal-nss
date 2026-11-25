@@ -1,6 +1,9 @@
 name: rpm
 on:
+  # branches get CI through their PR (tested merged with the base); push only for main and release tags
   push:
+    branches: [main]
+    tags: ['v*']
   pull_request:
 jobs:
   rpm:
