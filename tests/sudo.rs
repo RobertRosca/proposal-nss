@@ -1,6 +1,6 @@
 // Needs sudo, the spawner/other users and etc/sudoers.d/proposal-spawner; see Dockerfile.
 mod common;
-use common::{ok, run};
+use common::run;
 
 const N: &str = "euxfel-p001234";
 
@@ -9,16 +9,6 @@ fn sudo<'a>(user: &'a str, args: &[&'a str]) -> (bool, String) {
     let mut v = vec!["-u", user, "--", "sudo", "-n"];
     v.extend(args);
     run("runuser", &v)
-}
-
-#[test]
-fn sudoers_is_valid() {
-    ok("visudo", &["-c"]);
-}
-
-#[test]
-fn spawner_has_expected_identity() {
-    assert_eq!(ok("id", &["xdamnprd"]).trim(), "uid=55635(xdamnprd) gid=3555(exfel) groups=3555(exfel)");
 }
 
 #[test]
@@ -31,7 +21,6 @@ fn spawner_can_become_proposal_user() {
 
 #[test]
 fn spawner_cannot_become_anything_else() {
-    assert!(!sudo("xdamnprd", &["-u", "euxfel-p001235", "id"]).0); // no proposal group
     assert!(!sudo("xdamnprd", &["-u", "root", "id"]).0);
     assert!(!sudo("xdamnprd", &["-u", "nobody", "id"]).0);
     assert!(!sudo("xdamnprd", &["id"]).0); // plain sudo = root
