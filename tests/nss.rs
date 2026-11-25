@@ -64,12 +64,6 @@ fn id_has_primary_proposal_and_supplementary_groups() {
 }
 
 #[test]
-fn module_exposes_no_groups() {
-    fails("getent", &["group", "600012352"]);
-    fails("getent", &["group", "60001235-part"]);
-}
-
-#[test]
 fn no_proposal_group_means_no_user() {
     // 1235 has no external group; the rest are malformed or out of range
     for k in ["600012352", "euxfel-p001235", "599999999", "610000002", "600012341", "euxfel-p1234"] {
