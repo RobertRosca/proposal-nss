@@ -36,6 +36,36 @@ pub fn prop(no: u32) -> Vec<String> {
 }
 
 pub const EXP: &str = "/fake-exp/FXE/202201/p001237";
+pub const SCRATCH: &str = "/fake-scratch/FXE/202201/p001237";
+
+/// Production layout of p001237 (POSIX approximation of the NFSv4 ACLs): p{no} is 0550 xdata:xdata,
+/// so only root and xdata can enter it; scratch is a symlink to a tree whose dir belongs to the
+/// proposal group (rwx for 60001237-part only). Idempotent.
+pub fn exp_fixture() {
+    fs::create_dir_all(SCRATCH).unwrap();
+    ok("chgrp", &["60001237-part", SCRATCH]);
+    ok("chmod", &["770", SCRATCH]);
+    fs::create_dir_all(EXP).unwrap();
+    let link = format!("{EXP}/scratch");
+    if fs::symlink_metadata(&link).is_err() {
+        std::os::unix::fs::symlink(SCRATCH, &link).unwrap();
+    }
+    ok("chown", &["xdata:xdata", "/fake-exp/FXE/202201", EXP]);
+    ok("chmod", &["550", EXP]);
+}
+
+/// The module only needs to traverse the cycle dir to see p{no}: lookups must not depend on the
+/// caller being able to enter the 0550 xdata:xdata p{no} (slurmctld runs as `slurm`, users are non-members).
+pub fn assert_lookup_identical() {
+    exp_fixture();
+    for key in ["euxfel-p001237", "600012372"] {
+        let want = ok("getent", &["passwd", key]);
+        assert!(want.contains(&format!(":{EXP}/scratch/.exfl_prop_syn-home:")), "{want}");
+        for user in ["slurm", "outsider"] {
+            assert_eq!(ok("runuser", &["-u", user, "--", "getent", "passwd", key]), want, "{key} as {user}");
+        }
+    }
+}
 
 /// Trace of the prolog/epilog for `euxfel-p00123{n}` (n=7 or 8); `clear` it before the job under test.
 pub fn log(f: &str, n: u8) -> String {

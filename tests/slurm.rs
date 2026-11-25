@@ -1,6 +1,6 @@
 // Needs a running single-node Slurm; see Dockerfile and .config/nextest.toml.
 mod common;
-use common::slurm::{clear, job, log, node_state, prop, wait, EXP};
+use common::slurm::{assert_lookup_identical, clear, exp_fixture, job, log, node_state, prop, wait, EXP, SCRATCH};
 use common::{ok, run};
 use std::fs;
 
@@ -190,7 +190,7 @@ fn allowgroups_real_plus_synthetic_group_accepts_proposal_user() {
 
 #[test]
 fn prolog_runs_for_proposal_user_and_node_stays_idle() {
-    fs::create_dir_all(format!("{EXP}/scratch")).unwrap();
+    exp_fixture();
     clear(7);
     let (accepted, out) = job("prolog-ok", &prop(1237), "debug", "echo ran as $(id -un)");
     assert!(accepted && out.contains("ran as euxfel-p001237"), "{out}");
@@ -204,7 +204,7 @@ fn prolog_runs_for_proposal_user_and_node_stays_idle() {
 /// runs on every job; with the proposal dir present it creates the module's pw_dir.
 #[test]
 fn prolog_mkhomedir_creates_pw_dir_under_proposal_scratch() {
-    fs::create_dir_all(format!("{EXP}/scratch")).unwrap();
+    exp_fixture();
     let home = format!("{EXP}/scratch/.exfl_prop_syn-home");
     let _ = fs::remove_dir_all(&home);
     clear(7);
@@ -212,6 +212,15 @@ fn prolog_mkhomedir_creates_pw_dir_under_proposal_scratch() {
     assert_eq!(node_state(), "idle");
     assert!(std::path::Path::new(&home).is_dir(), "{home} missing; prolog log:\n{}", log("prolog", 7));
     assert!(!std::path::Path::new("/home/euxfel-p001237").exists());
+    // created through the scratch symlink, owned by the proposal user
+    assert!(fs::symlink_metadata(format!("{EXP}/scratch")).unwrap().is_symlink());
+    let real = format!("{SCRATCH}/.exfl_prop_syn-home");
+    assert_eq!(std::os::unix::fs::MetadataExt::uid(&fs::metadata(&real).unwrap()), 600012372, "{real}");
+}
+
+#[test]
+fn passwd_lookup_identical_for_root_slurm_and_non_member() {
+    assert_lookup_identical();
 }
 
 /// Observed: pw_dir=/nonexistent and mkhomedir_helper creates it at the container root (junk dir).
