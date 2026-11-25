@@ -65,13 +65,15 @@ fn require_prop_dir_holds_job_when_dir_vanishes_before_launch() {
 
     let g = require_prop_dir();
     fs::remove_dir_all("/fake-exp/FXE/202201/p001237").unwrap();
-    let mut reason = String::new();
+    // the reason is set before the requeue finishes (job still COMPLETING), so wait for both
+    let (mut reason, mut state) = (String::new(), String::new());
     wait(60, || {
         reason = job_field(&id, "Reason");
-        reason == "launch_failed_requeued_held"
+        state = job_field(&id, "JobState");
+        reason == "launch_failed_requeued_held" && state == "PENDING"
     });
     assert_eq!(reason, "launch_failed_requeued_held", "slurmd log:\n{}", fs::read_to_string("/var/log/slurm/slurmd.log").unwrap_or_default());
-    assert_eq!(job_field(&id, "JobState"), "PENDING");
+    assert_eq!(state, "PENDING");
     assert_eq!(job_field(&id, "Restarts"), "1");
     assert_eq!(node_state(), "idle");
 
