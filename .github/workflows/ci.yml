@@ -24,6 +24,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ env.SAVE_CACHE }}
@@ -33,6 +35,8 @@ jobs:
       # tests/scripts/in-userns.sh needs unprivileged user namespaces, blocked by AppArmor on 24.04
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: cargo nextest run
+      # after the tests, so a lint failure does not hide test results
+      - run: cargo clippy --all-targets --all-features -- -D warnings
   container:
     runs-on: ubuntu-24.04
     # a cold build (Slurm RPMs from source) takes ~7 min; a hung Slurm daemon must not hold the runner for 6 h
