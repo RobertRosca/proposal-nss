@@ -12,6 +12,15 @@ ARG EL_RELEASE
 RUN echo "$EL_RELEASE" > /etc/dnf/vars/releasever && dnf -y install rpm-build redhat-rpm-config rust-toolset sudo gcc tar gzip && dnf clean all
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
+# cargo vendor needs the lib target to exist; the stub is removed before the real sources arrive.
+# Own layer: source edits keep the downloaded crates cached.
+RUN <<EOT
+#!/bin/bash
+set -euo pipefail
+mkdir src && touch src/lib.rs
+cargo vendor -q vendor
+rm -r src
+EOT
 COPY src src
 COPY docs docs
 COPY packaging packaging
@@ -23,7 +32,6 @@ ver=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
 n=proposal-nss-$ver
 top=$HOME/rpmbuild; mkdir -p $top/SOURCES
 tar czf $top/SOURCES/$n.tar.gz --transform "s,^,$n/," Cargo.toml Cargo.lock src packaging/etc docs
-cargo vendor -q vendor
 tar czf $top/SOURCES/$n-vendor.tar.gz vendor
 rpmbuild -ba --define "pkg_version $ver" packaging/proposal-nss.spec
 EOT
