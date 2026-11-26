@@ -91,7 +91,8 @@ visible, since existence is decided by the proposal group (only with `require_pr
 module never creates either directory; the Slurm prolog's `mkhomedir_helper` does.
 
 If the fallback path already exists but is not a directory owned by the proposal user (a symlink,
-another owner, or group/world-writable), `pw_dir` is `/` instead.
+another owner, or group/world-writable), `pw_dir` is `/` instead. `home_fallback_dir = /` always
+gives `/`.
 
 ### Lookup failures
 

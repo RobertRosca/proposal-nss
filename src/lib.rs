@@ -158,7 +158,8 @@ fn home(dirs: Vec<std::path::PathBuf>, name: &str, uid: u32, c: &Conf) -> String
         .and_then(|d| d.join("scratch/.exfl_prop_syn-home").to_str().map(String::from))
         .unwrap_or_else(|| {
             let f = format!("{}/{name}", c.home_fallback_dir);
-            if owned_home(&f, uid) { f } else { "/".into() }
+            // `home_fallback_dir = /` (trimmed to "") turns per-user fallback homes off
+            if !c.home_fallback_dir.is_empty() && owned_home(&f, uid) { f } else { "/".into() }
         })
 }
 
@@ -276,6 +277,8 @@ mod tests {
         let o = parse("primary_gid=1\nsupplementary_gid=2\nhome_fallback_dir = /scratch/fb/ # c").unwrap();
         assert_eq!(passwd(900_511, &o, vec![]).dir, "/scratch/fb/euxfel-p900511");
         assert!(parse("primary_gid=1\nsupplementary_gid=2\nhome_fallback_dir=tmp").is_none());
+        let off = parse("primary_gid=1\nsupplementary_gid=2\nhome_fallback_dir = /").unwrap();
+        assert_eq!(passwd(900_511, &off, vec![]).dir, "/");
         let d = std::path::PathBuf::from("/x/FXE/202201/p900511");
         assert_eq!(passwd(900_511, &o, vec![d]).dir, "/x/FXE/202201/p900511/scratch/.exfl_prop_syn-home");
         assert_eq!(name_to_no(&p.name), Some(900_511));
