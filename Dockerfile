@@ -65,7 +65,12 @@ RUN curl -LsSf "https://get.nexte.st/${NEXTEST_VERSION}/linux" | tar zxf - -C /u
 # Stage 3: build the module and test binaries, install the module and sudoers.
 FROM base AS test
 WORKDIR /src
-COPY . .
+# only what the build and tests read, so edits to docs, CI or packaging specs keep the compile layer
+COPY Cargo.toml Cargo.lock ./
+COPY .config .config
+COPY src src
+COPY tests tests
+COPY packaging/etc packaging/etc
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked <<EOT
 #!/bin/bash
 set -euo pipefail
