@@ -2,6 +2,10 @@
 
 The package installs everything it can itself. A host manager (e.g. Puppet) only has to do the following.
 
+Tested in the container image (`Dockerfile`, ci profile): AlmaLinux 9 (glibc 2.34), sudo 1.9.17p2,
+Slurm 25.11.5 (built from the SchedMD tarball), MariaDB 10.5, nsswitch `files sss systemd proposal`
+without a running sssd. The target runs RHEL 9.8 with the same glibc, sudo and Slurm versions.
+
 ## Must be provided by the site
 
 | What | Why |
@@ -125,7 +129,7 @@ Set `require_prop_dir = false` on hosts without the tree (head and login nodes).
 every proposal user vanishes, so slurmctld and `sbatch` reject all jobs and the `AllowGroups` fallback above
 fails. On a host that has the option on, an unmounted exp tree hides all proposal users.
 
-Observed with Slurm 24.11.5 (tests in `tests/slurm_conf.rs`):
+Observed with Slurm 24.11.5 and 25.11.5 (tests in `tests/slurm_conf.rs`):
 
 - Directory missing at submit: `sbatch --uid` fails with `Invalid --uid specification` when
   submitting from a host that has the option on; the prolog never runs, so no fallback home is created.
