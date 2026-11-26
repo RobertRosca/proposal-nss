@@ -66,14 +66,12 @@ jobs:
           cache-from: type=registry,ref=${{ env.TEST_CACHE }}
           # ignore-error: a failed cache write must not fail the build
           cache-to: ${{ env.SAVE_CACHE == 'true' && format('type=registry,ref={0},mode=max,ignore-error=true', env.TEST_CACHE) || '' }}
-      # a failing run fails the job; named (no --rm) so junit.xml can be copied out
-      - run: docker run --name pnss-test pnss-test:ci
-      - if: always()
-        run: docker cp pnss-test:/src/target/nextest/ci/junit.xml junit.xml
+      # a failing run fails the job; the bind mount keeps junit.xml on the host either way
+      - run: docker run --rm -v "$PWD/junit:/src/target/nextest/ci" pnss-test:ci
       - if: always()
         uses: mikepenz/action-junit-report@v6.7.1
         with:
-          report_paths: junit.xml
+          report_paths: junit/junit.xml
   rpm:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
