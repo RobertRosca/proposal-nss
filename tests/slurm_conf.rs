@@ -1,6 +1,6 @@
 // Needs a running single-node Slurm; see Dockerfile and .config/nextest.toml.
 mod common;
-use common::slurm::{assert_lookup_identical, clear, exp_fixture, job, log, node_state, prop, uid, wait, EXP};
+use common::slurm::{assert_lookup_identical, clear, exp_fixture, job, job_field, log, node_state, prop, uid, wait, EXP};
 use common::{ok, require_prop_dir};
 use std::fs;
 
@@ -40,11 +40,6 @@ fn require_prop_dir_accepts_job_for_proposal_with_dir() {
 fn require_prop_dir_lookup_identical_for_root_slurm_and_non_member() {
     let _g = require_prop_dir();
     assert_lookup_identical();
-}
-
-fn job_field(id: &str, key: &str) -> String {
-    let out = ok("scontrol", &["show", "job", id]);
-    out.split_whitespace().find_map(|w| w.strip_prefix(&format!("{key}="))).unwrap_or_default().to_string()
 }
 
 /// The dir disappears while the job is queued (GPFS gone, proposal moved): slurmd cannot resolve

@@ -2,28 +2,59 @@
 use super::ok;
 use std::ffi::OsStr;
 use std::fs;
+use std::time::{Duration, Instant};
 
-/// Polls `f` once a second for up to `secs` seconds; true as soon as it returns true.
+/// Polls `f` every 100 ms for up to `secs` seconds; true as soon as it returns true.
 pub fn wait(secs: u32, mut f: impl FnMut() -> bool) -> bool {
-    (0..secs).any(|_| f() || {
-        std::thread::sleep(std::time::Duration::from_secs(1));
-        false
-    })
+    let end = Instant::now() + Duration::from_secs(secs.into());
+    loop {
+        if f() {
+            return true;
+        }
+        if Instant::now() >= end {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
-/// Submits `--wrap cmd` as `who` to `partition`; returns (accepted, job output or sbatch stderr).
+pub fn job_field(id: &str, key: &str) -> String {
+    let out = ok("scontrol", &["show", "job", id]);
+    out.split_whitespace().find_map(|w| w.strip_prefix(&format!("{key}="))).unwrap_or_default().to_string()
+}
+
+/// Polls the job record until a terminal JobState; returns (JobState, ExitCode). Replaces
+/// `sbatch --wait`, whose poll backoff (2 s, then x4) quantised test times. scontrol shows
+/// COMPLETING until the epilog ends, so this also waits for the epilog. MinJobAge=90 keeps the record.
+pub fn wait_job(id: &str) -> (String, String) {
+    const DONE: [&str; 9] = ["COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL", "PREEMPTED", "BOOT_FAIL", "DEADLINE", "OUT_OF_MEMORY"];
+    let mut state = String::new();
+    // generous: in the slurm binary a job can queue behind the QOS test's jobs (select/linear, one node)
+    let done = wait(300, || {
+        state = job_field(id, "JobState");
+        DONE.contains(&state.as_str())
+    });
+    assert!(done, "job {id} still {state}");
+    (state, job_field(id, "ExitCode"))
+}
+
+/// Submits `--wrap cmd` as `who` to `partition`; returns (accepted and exited 0, job output or sbatch stderr).
 pub fn job(name: &str, who: &[impl AsRef<OsStr>], partition: &str, cmd: &str) -> (bool, String) {
     let out = format!("/tmp/slurm-{name}.out");
     fs::write(&out, "").unwrap();
     ok("chmod", &["666", &out]);
     let o = std::process::Command::new("sbatch")
-        .args(["--wait", "--chdir", "/tmp", "--partition", partition, "--output", &out])
+        .args(["--parsable", "--chdir", "/tmp", "--partition", partition, "--output", &out])
         .args(who)
         .args(["--wrap", cmd])
         .output()
         .unwrap();
-    let text = if o.status.success() { fs::read_to_string(&out).unwrap() } else { String::from_utf8_lossy(&o.stderr).into_owned() };
-    (o.status.success(), text)
+    if !o.status.success() {
+        return (false, String::from_utf8_lossy(&o.stderr).into_owned());
+    }
+    let (state, exit) = wait_job(String::from_utf8_lossy(&o.stdout).trim());
+    let text = fs::read_to_string(&out).unwrap();
+    if state == "COMPLETED" && exit == "0:0" { (true, text) } else { (false, format!("JobState={state} ExitCode={exit}\n{text}")) }
 }
 
 /// uid of proposal `no` (see src/lib.rs: `60{no:06}2`); proposals 1241-1244 have fixture groups.

@@ -1,6 +1,6 @@
 // Needs a running single-node Slurm; see Dockerfile and .config/nextest.toml.
 mod common;
-use common::slurm::{assert_lookup_identical, clear, exp_fixture, job, log, node_state, prop, wait, EXP, SCRATCH};
+use common::slurm::{assert_lookup_identical, clear, exp_fixture, job, log, node_state, prop, wait, wait_job, EXP, SCRATCH};
 use common::{ok, run};
 use rstest::rstest;
 use std::fs;
@@ -28,9 +28,11 @@ fn proposal_user_job_submits_nested_job_as_itself() {
     .unwrap();
     ok("chmod", &["755", &format!("{d}/outer.sh")]);
 
-    ok("sbatch", &["--uid", U, "--gid", "15355", "--wait", "--chdir", d, "--output", &format!("{d}/outer.out"), &format!("{d}/outer.sh")]);
+    let id = ok("sbatch", &["--parsable", "--uid", U, "--gid", "15355", "--chdir", d, "--output", &format!("{d}/outer.out"), &format!("{d}/outer.sh")]);
+    let done = wait_job(id.trim());
 
     let outer = fs::read_to_string(format!("{d}/outer.out")).unwrap();
+    assert_eq!(done, ("COMPLETED".into(), "0:0".into()), "{outer}");
     // select/linear gives the outer job the whole node, so the inner job only runs once it ends.
     let mut inner = String::new();
     wait(30, || {
