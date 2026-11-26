@@ -13,7 +13,7 @@ const HOME: &str = ".exfl_prop_syn-home";
 /// Points the module at a fake exp tree through a conf of the test's own: a copy of
 /// /etc/proposal-nss.conf plus `exp_dir`, read by the test-conf module build via PROPOSAL_NSS_CONF.
 /// /etc is never written, so the nss tests run in parallel and never disturb other test binaries.
-struct FakeExp(tempfile::TempDir, #[allow(dead_code)] tempfile::NamedTempFile); // .1 keeps the conf alive
+struct FakeExp(tempfile::TempDir, tempfile::NamedTempFile); // .1 keeps the conf alive
 
 impl FakeExp {
     fn new(dirs: &[&str], require: bool) -> Self {
@@ -27,6 +27,10 @@ impl FakeExp {
         // SAFETY: nextest runs each test in its own process and nothing else reads the env concurrently.
         unsafe { std::env::set_var("PROPOSAL_NSS_CONF", conf.path()) };
         Self(root, conf)
+    }
+    fn add(&self, line: &str) {
+        let cur = std::fs::read_to_string(&self.1).unwrap();
+        std::fs::write(&self.1, format!("{cur}{line}\n")).unwrap();
     }
     fn home(&self, rel: &str) -> String {
         format!("{}/{rel}/scratch/{HOME}", self.0.path().display())
@@ -46,7 +50,7 @@ fn dir_of(key: &str) -> String {
 
 #[test]
 fn passwd_entry_by_uid_and_name() {
-    let want = format!("{N}:*:{U}:15355:p001234 user:/nonexistent:/sbin/nologin");
+    let want = format!("{N}:*:{U}:15355:p001234 user:/tmp/{N}:/sbin/nologin");
     assert_eq!(ok("getent", &["passwd", U]).trim(), want);
     assert_eq!(ok("getent", &["passwd", N]).trim(), want);
 }
@@ -70,7 +74,7 @@ fn no_proposal_group_means_no_user() {
 
 enum Want {
     Home(&'static str),
-    Nonexistent,
+    Fallback,
     Absent,
 }
 
@@ -79,7 +83,7 @@ enum Want {
 // other proposals' dirs and plain files must not confuse the glob
 #[case::home_from_instrument_and_cycle(&["FXE/202230/p001234", "FXE/202230/p001235", "SPB/202230/p009999"], false, 1234, Want::Home("FXE/202230/p001234"))]
 #[case::multiple_matches_pick_smallest_path(&["SPB/202201/p001234", "FXE/202230/p001234", "FXE/202101/p001234"], false, 1234, Want::Home("FXE/202101/p001234"))]
-#[case::missing_dir_falls_back_without_require(&["FXE/202230/p001235"], false, 1234, Want::Nonexistent)]
+#[case::missing_dir_falls_back_without_require(&["FXE/202230/p001235"], false, 1234, Want::Fallback)]
 #[case::require_hides_user_without_dir(&["FXE/202230/p001235"], true, 1234, Want::Absent)]
 #[case::require_keeps_user_with_dir(&["FXE/202230/p001234"], true, 1234, Want::Home("FXE/202230/p001234"))]
 #[case::require_still_needs_group(&["FXE/202230/p001235"], true, 1235, Want::Absent)]
@@ -91,7 +95,7 @@ fn home_dir(#[case] dirs: &[&str], #[case] require: bool, #[case] no: u32, #[cas
     for k in [format!("60{no:06}2"), name.clone()] {
         match &want {
             Want::Home(rel) => assert_eq!(dir_of(&k), t.home(rel)),
-            Want::Nonexistent => assert_eq!(dir_of(&k), "/nonexistent"),
+            Want::Fallback => assert_eq!(dir_of(&k), format!("/tmp/{name}")),
             Want::Absent => fails("getent", &["passwd", &k]),
         }
     }
@@ -106,7 +110,14 @@ fn missing_exp_dir_falls_back() {
     // exp_dir absent (GPFS not mounted): same fallback as a missing proposal dir
     let t = FakeExp::new(&[], false);
     std::fs::remove_dir(t.0.path()).unwrap();
-    assert_eq!(dir_of(U), "/nonexistent");
+    assert_eq!(dir_of(U), format!("/tmp/{N}"));
+}
+
+#[test]
+fn home_fallback_dir_sets_prefix_of_fallback_home() {
+    let t = FakeExp::new(&["FXE/202230/p001235"], false);
+    t.add("home_fallback_dir = /var/tmp/fb/");
+    assert_eq!(dir_of(N), format!("/var/tmp/fb/{N}"));
 }
 
 /// Points the module at a conf of the test's own that is missing, or a directory (read fails with

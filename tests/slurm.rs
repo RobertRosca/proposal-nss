@@ -182,14 +182,44 @@ fn passwd_lookup_identical_for_root_slurm_and_non_member() {
     assert_lookup_identical();
 }
 
-/// Observed: pw_dir=/nonexistent and mkhomedir_helper creates it at the container root (junk dir).
+/// Without a proposal dir pw_dir is the per-user fallback /tmp/euxfel-p001238: mkhomedir_helper
+/// creates it for that user only (no shared /nonexistent), and the epilog's /tmp cleanup removes it
+/// once the user's last job on the node ends.
 #[test]
-fn prolog_mkhomedir_creates_nonexistent_junk_dir_without_proposal_dir() {
+fn prolog_mkhomedir_creates_per_user_fallback_home_without_proposal_dir() {
+    let home = "/tmp/euxfel-p001238";
     let _ = fs::remove_dir_all("/nonexistent");
+    let _ = fs::remove_dir_all(home);
     clear(8);
-    assert!(job("prolog-junk", &prop(1238), "debug", "true").0);
+    let cmd = "h=$(getent passwd $(id -u) | cut -d: -f6); echo home=$h; test -d $h -a -w $h && echo writable";
+    let (accepted, out) = job("prolog-fallback", &prop(1238), "debug", cmd);
+    assert!(accepted && out.contains(&format!("home={home}\nwritable")), "{out}\nprolog log:\n{}", log("prolog", 8));
     assert_eq!(node_state(), "idle", "{}", log("prolog", 8));
-    assert!(std::path::Path::new("/nonexistent").exists(), "prolog log:\n{}", log("prolog", 8));
+    assert!(!std::path::Path::new("/nonexistent").exists());
+    assert!(!std::path::Path::new(home).exists(), "epilog left {home}:\n{}", log("epilog", 8));
+}
+
+/// Another user pre-creates the fallback home in world-writable /tmp: the module refuses it and
+/// hands out "/", so mkhomedir_helper creates nothing and the squatter's dir stays untouched.
+#[test]
+fn prolog_refuses_fallback_home_squatted_by_other_user() {
+    struct Squat(&'static str);
+    impl Drop for Squat {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(self.0); // owned by otheruser, so the epilog leaves it
+        }
+    }
+    let s = Squat("/tmp/euxfel-p001238");
+    let _ = fs::remove_dir_all(s.0);
+    fs::create_dir(s.0).unwrap();
+    ok("chown", &["otheruser", s.0]);
+    ok("chmod", &["755", s.0]);
+    assert!(ok("getent", &["passwd", "euxfel-p001238"]).contains(":/:"));
+    clear(8);
+    let (accepted, out) = job("prolog-squat", &prop(1238), "debug", "echo home=$(getent passwd $(id -u) | cut -d: -f6)");
+    assert!(accepted && out.contains("home=/\n"), "{out}\nprolog log:\n{}", log("prolog", 8));
+    assert_eq!(node_state(), "idle", "{}", log("prolog", 8));
+    assert_eq!(fs::read_dir(s.0).unwrap().count(), 0, "{} gained files", s.0);
 }
 
 /// Epilog: pkill -KILL -U $SLURM_UID and find -user $SLURM_UID rm -rf work with the synthetic uid.
