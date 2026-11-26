@@ -22,14 +22,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@1.92.0
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: swatinem/rust-cache@v2.9.3
         with:
           save-if: ${{ env.SAVE_CACHE }}
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@v2.90.10
         with:
           tool: cargo-nextest
       # tests/scripts/in-userns.sh needs unprivileged user namespaces, blocked by AppArmor on 24.04
@@ -45,9 +45,9 @@ jobs:
       contents: read
       checks: write # mikepenz/action-junit-report
     steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/build-push-action@v7
+      - uses: actions/checkout@v7.0.1
+      - uses: docker/setup-buildx-action@v4.4.1
+      - uses: docker/build-push-action@v7.4.0
         with:
           context: .
           load: true
@@ -61,16 +61,16 @@ jobs:
       - if: always()
         run: docker cp pnss-test:/src/target/nextest/ci/junit.xml junit.xml
       - if: always()
-        uses: mikepenz/action-junit-report@v6
+        uses: mikepenz/action-junit-report@v6.7.1
         with:
           report_paths: junit.xml
   rpm:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/build-push-action@v7
+      - uses: actions/checkout@v7.0.1
+      - uses: docker/setup-buildx-action@v4.4.1
+      - uses: docker/build-push-action@v7.4.0
         with:
           context: .
           file: packaging/Dockerfile.el9
@@ -78,7 +78,7 @@ jobs:
           outputs: type=local,dest=dist
           cache-from: type=gha
           cache-to: ${{ env.SAVE_CACHE == 'true' && 'type=gha,mode=max,ignore-error=true' || '' }}
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: rpms
           path: dist/
@@ -92,12 +92,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - name: Check tag matches Cargo.toml version
         run: |
           ver=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
           [ "${GITHUB_REF_NAME#v}" = "$ver" ] || { echo "tag $GITHUB_REF_NAME != Cargo.toml $ver" >&2; exit 1; }
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@v8.0.2
         with:
           name: rpms
           path: dist
