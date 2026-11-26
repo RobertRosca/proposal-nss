@@ -16,12 +16,13 @@ BuildRequires:  sudo
 Requires:       sudo
 
 # Site-provided: groups exfel/exfel_prop_syn and user xdamnprd come from the directory service.
-# /etc/nsswitch.conf ("passwd: ... proposal", "group: ... proposal") is managed by Puppet,
+# /etc/nsswitch.conf ("passwd: ... proposal", "group: ... proposal") and
+# /etc/sudoers.d/proposal-spawner (shipped as %%doc) are managed by Puppet,
 # see docs/deployment.md (installed as %%doc).
 
 %description
-glibc NSS module (libnss_proposal.so.2) and the sudoers rule that lets the
-spawner user switch to the synthetic proposal users.
+glibc NSS module (libnss_proposal.so.2) and an example sudoers rule that lets
+the spawner user switch to the synthetic proposal users.
 
 %prep
 %autosetup
@@ -40,11 +41,10 @@ cargo build --release --offline --frozen
 
 %install
 install -Dm755 target/release/libnss_proposal.so %{buildroot}%{_libdir}/libnss_proposal.so.2
-install -Dm440 etc/sudoers.d/proposal-spawner %{buildroot}%{_sysconfdir}/sudoers.d/proposal-spawner
-install -Dm644 etc/proposal-nss.conf %{buildroot}%{_sysconfdir}/proposal-nss.conf
+install -Dm644 packaging/etc/proposal-nss.conf %{buildroot}%{_sysconfdir}/proposal-nss.conf
 
 %check
-visudo -cf etc/sudoers.d/proposal-spawner
+visudo -cf packaging/etc/sudoers.d/proposal-spawner
 # the test-conf feature must never reach a release build: sudo would read a user-chosen conf
 if grep -aq PROPOSAL_NSS_CONF target/release/libnss_proposal.so; then
   echo "release .so contains the PROPOSAL_NSS_CONF lookup (test-conf feature enabled)" >&2
@@ -52,9 +52,8 @@ if grep -aq PROPOSAL_NSS_CONF target/release/libnss_proposal.so; then
 fi
 
 %files
-%doc docs/deployment.md
+%doc docs/deployment.md packaging/etc/sudoers.d/proposal-spawner
 %{_libdir}/libnss_proposal.so.2
-%config(noreplace) %attr(0440,root,root) %{_sysconfdir}/sudoers.d/proposal-spawner
 %config(noreplace) %{_sysconfdir}/proposal-nss.conf
 
 %changelog

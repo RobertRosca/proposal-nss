@@ -40,8 +40,8 @@ cargo test --release --no-run
 # test-conf module for the nss tests (build-module in .config/nextest.toml, a no-op when nextest reruns it)
 cargo build --lib --features test-conf --target-dir target/test-conf
 install -m644 target/release/libnss_proposal.so /usr/lib/libnss_proposal.so.2
-install -m440 etc/sudoers.d/proposal-spawner /etc/sudoers.d/proposal-spawner
-install -m644 etc/proposal-nss.conf /etc/proposal-nss.conf
+install -m440 packaging/etc/sudoers.d/proposal-spawner /etc/sudoers.d/proposal-spawner
+install -m644 packaging/etc/proposal-nss.conf /etc/proposal-nss.conf
 # the container is head node too: proposal users without a dir must resolve (tests opt in to require_prop_dir)
 echo 'require_prop_dir = false' >> /etc/proposal-nss.conf
 install -m755 tests/fixtures/prod-prolog/*.sh /etc/slurm/

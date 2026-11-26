@@ -10,6 +10,7 @@ The package installs everything it can itself. A host manager (e.g. Puppet) only
 | `/etc/nsswitch.conf` entries (below) | glibc NSS has no drop-in mechanism, so the package cannot edit it. |
 | Values in `/etc/proposal-nss.conf` if the GIDs differ from the shipped defaults | Must match `getent group exfel_prop_syn` / `exfel`. |
 | `require_prop_dir = false` in `/etc/proposal-nss.conf` on hosts without the exp tree (head and login nodes) | Otherwise every proposal user vanishes there; see "Require proposal directory". |
+| `/etc/sudoers.d/proposal-spawner`, mode 0440, on hosts that spawn proposal jobs | Note that this rule is in the package only as a `%doc` example (`/usr/share/doc/proposal-nss/proposal-spawner`), it is not installed. Validate with `visudo -cf`. |
 
 ### nsswitch.conf
 
@@ -63,7 +64,6 @@ Proposal users also need a Slurm association, see [association-provisioning.md](
 |------|-------|
 | `/usr/lib64/libnss_proposal.so.2` | The NSS module. |
 | `/etc/proposal-nss.conf` | `%config(noreplace)`. Keys `primary_gid` and `supplementary_gid`, both required; optional `exp_dir` (default `/gpfs/exfel/exp`, see "Home directory") `require_prop_dir` (default `true`, see "Require proposal directory") and `home_fallback_dir` (default `/tmp`). Invalid or missing file means the module exposes no users; an unreadable one (e.g. EACCES) makes lookups return UNAVAIL. |
-| `/etc/sudoers.d/proposal-spawner` | `%config(noreplace)`, mode 0440. Validate with `visudo -cf` before deploying a modified copy. |
 
 ## Puppet sketch
 
@@ -73,6 +73,12 @@ package { 'proposal-nss': ensure => installed }
 file { '/etc/proposal-nss.conf':   # only if GIDs differ from the shipped file
   content      => epp('site/proposal-nss.conf.epp'),
   require      => Package['proposal-nss'],
+}
+
+file { '/etc/sudoers.d/proposal-spawner':
+  content      => "xdamnprd ALL=(%exfel_prop_syn) NOPASSWD: ALL\n",
+  mode         => '0440',
+  validate_cmd => '/usr/sbin/visudo -cf %',
 }
 
 # nsswitch.conf: append `proposal` to passwd and group in the module that owns the file
