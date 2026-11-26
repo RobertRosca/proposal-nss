@@ -2,10 +2,14 @@
 # Builds the RPM against EL9 glibc. Export it with:
 #   docker build -f packaging/Dockerfile.el9 --target rpms --output type=local,dest=dist .
 # Swap EL_IMAGE for registry.access.redhat.com/ubi9/ubi to build on UBI.
-ARG EL_IMAGE=docker.io/almalinux/9-base
+# pinned: a moved tag would invalidate every cached layer
+ARG EL_IMAGE=docker.io/almalinux/9-base:9.8-20261114@sha256:9f7dfcd2652774222fe70ef5bfdcecdefdcc6e46cfb1c753c986a46e00ebf5ab
+# the target cluster runs 9.8; dnf otherwise resolves $releasever 9 to the latest minor's packages
+ARG EL_RELEASE=9.8
 
 FROM ${EL_IMAGE} AS build
-RUN dnf -y install rpm-build redhat-rpm-config rust-toolset sudo gcc tar gzip && dnf clean all
+ARG EL_RELEASE
+RUN echo "$EL_RELEASE" > /etc/dnf/vars/releasever && dnf -y install rpm-build redhat-rpm-config rust-toolset sudo gcc tar gzip && dnf clean all
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY src src

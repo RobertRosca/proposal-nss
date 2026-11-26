@@ -2,7 +2,7 @@
 
 The package installs everything it can itself. A host manager (e.g. Puppet) only has to do the following.
 
-Tested in the container image (`Dockerfile`, ci profile): AlmaLinux 9 (glibc 2.34), sudo 1.9.17p2,
+Tested in the container image (`Dockerfile`, ci profile): AlmaLinux 9.8 (glibc 2.34), sudo 1.9.17p2,
 Slurm 25.11.5 (built from the SchedMD tarball), MariaDB 10.5, nsswitch `files sss systemd proposal`
 without a running sssd. The target runs RHEL 9.8 with the same glibc, sudo and Slurm versions.
 
