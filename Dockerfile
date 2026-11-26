@@ -3,7 +3,10 @@
 # single-node Slurm (munge auth, slurmdbd+MariaDB accounting), then runs the integration tests
 # via cargo-nextest (see .config/nextest.toml). EL9 and Slurm 25.11 to match the target cluster.
 
-ARG EL_IMAGE=docker.io/almalinux/9-base
+# pinned: a moved tag would rebuild every layer (the Slurm RPMs take ~3 min)
+ARG EL_IMAGE=docker.io/almalinux/9-base:9.8-20261114@sha256:9f7dfcd2652774222fe70ef5bfdcecdefdcc6e46cfb1c753c986a46e00ebf5ab
+# the target cluster runs 9.8; dnf otherwise resolves $releasever 9 to the latest minor's packages
+ARG EL_RELEASE=9.8
 
 # Stage 1: Slurm RPMs from the SchedMD tarball. The cluster's RPMs (DESY desy-common repo) are
 # unreachable from outside DESY. Spec defaults (munge, pam, x11, mysql via mariadb-devel) cover what
@@ -12,9 +15,11 @@ ARG EL_IMAGE=docker.io/almalinux/9-base
 FROM ${EL_IMAGE} AS slurm-rpms
 ARG SLURM_VERSION=25.11.5
 ARG SLURM_SHA256=c95361df00a035571c101834cd3988c224a38c4a3c8c67252aedb7527d447277
+ARG EL_RELEASE
 RUN <<EOT
 #!/bin/bash
 set -euo pipefail
+echo "$EL_RELEASE" > /etc/dnf/vars/releasever
 dnf -y install dnf-plugins-core rpm-build perl-interpreter bzip2
 dnf config-manager --set-enabled crb # munge-devel
 t=slurm-${SLURM_VERSION}.tar.bz2
@@ -33,9 +38,11 @@ EOT
 # Stage 2: system dependencies, nextest, fixture users and groups.
 FROM ${EL_IMAGE} AS base
 ARG NEXTEST_VERSION=0.9.151
+ARG EL_RELEASE
 RUN --mount=type=bind,from=slurm-rpms,source=/root/rpmbuild/RPMS/x86_64,target=/rpms <<EOT
 #!/bin/bash
 set -euo pipefail
+echo "$EL_RELEASE" > /etc/dnf/vars/releasever
 # sssd-client: libnss_sss loads and returns UNAVAIL (no sssd), as ahead of the module in production
 dnf -y install rust-toolset mariadb-server munge sudo sssd-client hostname \
   /rpms/slurm-[0-9]*.rpm /rpms/slurm-slurmctld-*.rpm /rpms/slurm-slurmd-*.rpm /rpms/slurm-slurmdbd-*.rpm
