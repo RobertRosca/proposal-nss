@@ -10,6 +10,9 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+# read-only token by default; jobs that need more declare it
+permissions:
+  contents: read
 # only main saves caches: a PR's cache is readable by that PR alone, so PR writes only evict main's
 env:
   SAVE_CACHE: ${{ github.ref == 'refs/heads/main' }}
@@ -17,6 +20,7 @@ jobs:
   host:
     # pinned: the AppArmor userns workaround below is specific to this image version
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -31,6 +35,8 @@ jobs:
       - run: cargo nextest run
   container:
     runs-on: ubuntu-24.04
+    # a cold build (Slurm RPMs from source) takes ~7 min; a hung Slurm daemon must not hold the runner for 6 h
+    timeout-minutes: 20
     permissions:
       contents: read
       checks: write # mikepenz/action-junit-report
@@ -56,6 +62,7 @@ jobs:
           report_paths: junit.xml
   rpm:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -77,6 +84,7 @@ jobs:
     # every test job, not only the build: a tag on a failing commit must not publish
     needs: [host, container, rpm]
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
