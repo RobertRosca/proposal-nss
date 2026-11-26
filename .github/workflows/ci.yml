@@ -77,16 +77,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
+      # same ghcr cache as the container job (it writes the rpm-build stage too); read-only here
+      - run: echo "TEST_CACHE=ghcr.io/${GITHUB_REPOSITORY,,}-test-cache:main" >> "$GITHUB_ENV"
       - uses: actions/checkout@v7.0.1
       - uses: docker/setup-buildx-action@v4.4.1
       - uses: docker/build-push-action@v7.4.0
         with:
           context: .
-          file: packaging/Dockerfile.el9
           target: rpms
           outputs: type=local,dest=dist
-          cache-from: type=gha
-          cache-to: ${{ env.SAVE_CACHE == 'true' && 'type=gha,mode=max,ignore-error=true' || '' }}
+          cache-from: type=registry,ref=${{ env.TEST_CACHE }}
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: rpms
