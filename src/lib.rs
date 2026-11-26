@@ -149,18 +149,36 @@ fn proposal_dirs(no: u32, exp_dir: &str) -> Result<Vec<std::path::PathBuf>, Fail
 }
 
 // Without a proposal dir each user gets its own {home_fallback_dir}/{name} (default /tmp), so
-// mkhomedir_helper never creates one shared, wrongly owned home such as /nonexistent.
-fn home(dirs: Vec<std::path::PathBuf>, name: &str, c: &Conf) -> String {
+// mkhomedir_helper never creates one shared, wrongly owned home such as /nonexistent. A squatted
+// fallback (see owned_home) becomes "/": root-owned, so mkhomedir_helper leaves it alone and nobody
+// else controls the user's dotfiles; the user stays resolvable, with a HOME it cannot write.
+fn home(dirs: Vec<std::path::PathBuf>, name: &str, uid: u32, c: &Conf) -> String {
     dirs.into_iter()
         .min()
         .and_then(|d| d.join("scratch/.exfl_prop_syn-home").to_str().map(String::from))
-        .unwrap_or_else(|| format!("{}/{name}", c.home_fallback_dir))
+        .unwrap_or_else(|| {
+            let f = format!("{}/{name}", c.home_fallback_dir);
+            if owned_home(&f, uid) { f } else { "/".into() }
+        })
+}
+
+// The fallback prefix may be world-writable (/tmp): anyone can pre-create {prefix}/{name}, and
+// mkhomedir_helper keeps an existing path. Accept it only if absent (mkhomedir_helper creates it)
+// or a real dir (lstat: no symlink) owned by `uid` that group and others cannot write (all proposal
+// users share their primary group). Lookup-time only: the path can still appear before
+// mkhomedir_helper runs (TOCTOU), so a root-owned home_fallback_dir is the real fix.
+fn owned_home(p: &str, uid: u32) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match std::fs::symlink_metadata(p) {
+        Ok(m) => m.is_dir() && m.uid() == uid && m.mode() & 0o022 == 0,
+        Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+    }
 }
 
 fn passwd(no: u32, c: &Conf, dirs: Vec<std::path::PathBuf>) -> Passwd {
     let name = format!("euxfel-p{no:06}");
     Passwd {
-        dir: home(dirs, &name, c),
+        dir: home(dirs, &name, id_of(no), c),
         name,
         passwd: "*".into(), // locked; "x" makes pam_unix look up a shadow entry we don't provide
         uid: id_of(no),
@@ -286,6 +304,34 @@ mod tests {
         assert_eq!(proposal_dirs(1234, root).unwrap(), vec![t.join("FXE/202230/p001234")]);
         assert_eq!(proposal_dirs(1235, root).unwrap(), Vec::<std::path::PathBuf>::new());
         assert_eq!(proposal_dirs(1234, t.join("absent").to_str().unwrap()).unwrap(), Vec::<std::path::PathBuf>::new());
+    }
+
+    #[test]
+    fn fallback_home_refused_unless_owned() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let tmp = tempfile::tempdir().unwrap();
+        let t = tmp.path();
+        std::fs::create_dir(t.join("own")).unwrap();
+        std::fs::set_permissions(t.join("own"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        symlink(t.join("own"), t.join("link")).unwrap();
+        let me = nix::unistd::geteuid().as_raw();
+        let p = |n: &str| t.join(n).to_str().unwrap().to_string();
+        assert!(owned_home(&p("absent"), me));
+        assert!(owned_home(&p("own"), me));
+        assert!(!owned_home(&p("own"), me + 1), "other owner");
+        assert!(!owned_home(&p("link"), me), "symlink to own dir");
+        for mode in [0o775, 0o757, 0o777] {
+            std::fs::set_permissions(t.join("own"), std::fs::Permissions::from_mode(mode)).unwrap();
+            assert!(!owned_home(&p("own"), me), "{mode:o}");
+        }
+        std::fs::write(t.join("file"), "").unwrap();
+        assert!(!owned_home(&p("file"), me), "plain file");
+        assert!(!owned_home(&p("file/sub"), me), "ENOTDIR");
+        // a dir the test made is never owned by the proposal uid, so passwd hands out "/"
+        let c = parse(&format!("primary_gid=1\nsupplementary_gid=2\nhome_fallback_dir={}", t.display())).unwrap();
+        std::fs::create_dir(t.join("euxfel-p900511")).unwrap();
+        assert_eq!(passwd(900_511, &c, vec![]).dir, "/");
+        assert_eq!(passwd(900_512, &c, vec![]).dir, p("euxfel-p900512"));
     }
 
     #[test]

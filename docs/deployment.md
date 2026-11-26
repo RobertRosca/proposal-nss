@@ -90,6 +90,9 @@ mounted) `pw_dir` is `{home_fallback_dir}/{user}`, e.g. `/tmp/euxfel-p001240`; t
 visible, since existence is decided by the proposal group (only with `require_prop_dir = false`). The
 module never creates either directory; the Slurm prolog's `mkhomedir_helper` does.
 
+If the fallback path already exists but is not a directory owned by the proposal user (a symlink,
+another owner, or group/world-writable), `pw_dir` is `/` instead.
+
 ### Lookup failures
 
 A failed `getgrgid_r` (sssd/LDAP `EAGAIN`/`EIO`, or `ERANGE` at the 1 MiB cap) returns `TRYAGAIN`, and
