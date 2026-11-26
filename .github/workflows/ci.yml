@@ -44,18 +44,28 @@ jobs:
     permissions:
       contents: read
       checks: write # mikepenz/action-junit-report
+      packages: write # registry cache in ghcr; only used on main
     steps:
+      # main writes the cache; PRs read it anonymously, so the ghcr package must be public.
+      # ghcr refs must be lowercase, which expressions cannot do, hence bash ${,,}
+      - run: echo "TEST_CACHE=ghcr.io/${GITHUB_REPOSITORY,,}-test-cache:main" >> "$GITHUB_ENV"
       - uses: actions/checkout@v7.0.1
       - uses: docker/setup-buildx-action@v4.4.1
+      - if: env.SAVE_CACHE == 'true'
+        uses: docker/login-action@v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@v7.4.0
         with:
           context: .
           load: true
           tags: pnss-test:ci
-          # distinct scope: the rpm job uses the default scope
-          cache-from: type=gha,scope=container-test
+          # registry cache survives GHA cache eviction, so a cold cache does not rebuild Slurm
+          cache-from: type=registry,ref=${{ env.TEST_CACHE }}
           # ignore-error: a failed cache write must not fail the build
-          cache-to: ${{ env.SAVE_CACHE == 'true' && 'type=gha,scope=container-test,mode=max,ignore-error=true' || '' }}
+          cache-to: ${{ env.SAVE_CACHE == 'true' && format('type=registry,ref={0},mode=max,ignore-error=true', env.TEST_CACHE) || '' }}
       # a failing run fails the job; named (no --rm) so junit.xml can be copied out
       - run: docker run --name pnss-test pnss-test:ci
       - if: always()
