@@ -1,4 +1,4 @@
-// Needs sudo, the spawner/other users and etc/sudoers.d/proposal-spawner; see Dockerfile.
+// Needs sudo, the spawner/other users and packaging/etc/sudoers.d/proposal-spawner; see Dockerfile.
 mod common;
 use common::run;
 

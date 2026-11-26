@@ -40,11 +40,11 @@ cargo build --release --offline --frozen
 
 %install
 install -Dm755 target/release/libnss_proposal.so %{buildroot}%{_libdir}/libnss_proposal.so.2
-install -Dm440 etc/sudoers.d/proposal-spawner %{buildroot}%{_sysconfdir}/sudoers.d/proposal-spawner
-install -Dm644 etc/proposal-nss.conf %{buildroot}%{_sysconfdir}/proposal-nss.conf
+install -Dm440 packaging/etc/sudoers.d/proposal-spawner %{buildroot}%{_sysconfdir}/sudoers.d/proposal-spawner
+install -Dm644 packaging/etc/proposal-nss.conf %{buildroot}%{_sysconfdir}/proposal-nss.conf
 
 %check
-visudo -cf etc/sudoers.d/proposal-spawner
+visudo -cf packaging/etc/sudoers.d/proposal-spawner
 # the test-conf feature must never reach a release build: sudo would read a user-chosen conf
 if grep -aq PROPOSAL_NSS_CONF target/release/libnss_proposal.so; then
   echo "release .so contains the PROPOSAL_NSS_CONF lookup (test-conf feature enabled)" >&2
