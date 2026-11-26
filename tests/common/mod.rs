@@ -8,7 +8,11 @@ pub fn run(cmd: &str, args: &[&str]) -> (bool, String) {
     let o = Command::new(cmd).args(args).output().unwrap_or_else(|e| panic!("spawn {cmd}: {e}"));
     let out = String::from_utf8_lossy(&o.stdout).into_owned();
     if !o.status.success() {
-        eprintln!("$ {cmd} {args:?}\nstatus: {}\nstdout: {out}\nstderr: {}", o.status, String::from_utf8_lossy(&o.stderr));
+        eprintln!(
+            "$ {cmd} {args:?}\nstatus: {}\nstdout: {out}\nstderr: {}",
+            o.status,
+            String::from_utf8_lossy(&o.stderr)
+        );
     }
     (o.status.success(), out)
 }

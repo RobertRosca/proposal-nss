@@ -23,7 +23,11 @@ impl FakeExp {
         }
         let conf = tempfile::NamedTempFile::new().unwrap();
         let base = std::fs::read_to_string(CONF).unwrap();
-        std::fs::write(&conf, format!("{base}\nexp_dir = {}\nrequire_prop_dir = {require}\n", root.path().display())).unwrap();
+        std::fs::write(
+            &conf,
+            format!("{base}\nexp_dir = {}\nrequire_prop_dir = {require}\n", root.path().display()),
+        )
+        .unwrap();
         // SAFETY: nextest runs each test in its own process and nothing else reads the env concurrently.
         unsafe { std::env::set_var("PROPOSAL_NSS_CONF", conf.path()) };
         Self(root, conf)
@@ -58,7 +62,12 @@ fn passwd_entry_by_uid_and_name() {
 #[test]
 fn id_has_primary_proposal_and_supplementary_groups() {
     let out = ok("id", &[N]);
-    for part in [&format!("uid={U}({N})")[..], "gid=15355(exfel_prop_syn)", "600012342(60001234-part)", "3555(exfel)"] {
+    for part in [
+        &format!("uid={U}({N})")[..],
+        "gid=15355(exfel_prop_syn)",
+        "600012342(60001234-part)",
+        "3555(exfel)",
+    ] {
         assert!(out.contains(part), "{part} missing from {out}");
     }
 }
