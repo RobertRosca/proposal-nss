@@ -1,4 +1,4 @@
-name: rpm
+name: ci
 on:
   # branches get CI through their PR (tested merged with the base); push only for main and release tags
   push:
@@ -11,6 +11,43 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  host:
+    # pinned: the AppArmor userns workaround below is specific to this image version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      # tests/scripts/in-userns.sh needs unprivileged user namespaces, blocked by AppArmor on 24.04
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: cargo nextest run
+  container:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      checks: write # mikepenz/action-junit-report
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: pnss-test:ci
+          # distinct scope: the rpm job uses the default scope
+          cache-from: type=gha,scope=container-test
+          cache-to: type=gha,scope=container-test,mode=max
+      # a failing run fails the job; named (no --rm) so junit.xml can be copied out
+      - run: docker run --name pnss-test pnss-test:ci
+      - if: always()
+        run: docker cp pnss-test:/src/target/nextest/ci/junit.xml junit.xml
+      - if: always()
+        uses: mikepenz/action-junit-report@v5
+        with:
+          report_paths: junit.xml
   rpm:
     runs-on: ubuntu-24.04
     steps:
@@ -31,7 +68,8 @@ jobs:
           if-no-files-found: error
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: rpm
+    # every test job, not only the build: a tag on a failing commit must not publish
+    needs: [host, container, rpm]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
