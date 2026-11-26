@@ -50,8 +50,8 @@ fn require_prop_dir_lookup_identical_for_root_slurm_and_non_member() {
 fn require_prop_dir_holds_job_when_dir_vanishes_before_launch() {
     exp_fixture();
     clear(7);
-    // select/linear: the blocker owns the node, so the proposal job stays pending until it ends
-    ok("sbatch", &["--uid", "55636", "--gid", "3555", "--chdir", "/tmp", "--output", "/dev/null", "--wrap", "sleep 8"]);
+    // select/linear: the blocker owns the node, so the proposal job stays pending until it is cancelled
+    let blocker = ok("sbatch", &["--parsable", "--uid", "55636", "--gid", "3555", "--chdir", "/tmp", "--output", "/dev/null", "--wrap", "sleep 300"]);
     let out = "/tmp/slurm-req-held.out";
     fs::write(out, "").unwrap();
     ok("chmod", &["666", out]);
@@ -60,6 +60,7 @@ fn require_prop_dir_holds_job_when_dir_vanishes_before_launch() {
 
     let g = require_prop_dir();
     fs::remove_dir_all("/fake-exp/FXE/202201/p001237").unwrap();
+    ok("scancel", &[blocker.trim()]);
     // the reason is set before the requeue finishes (job still COMPLETING), so wait for both
     let (mut reason, mut state) = (String::new(), String::new());
     wait(60, || {
@@ -75,9 +76,9 @@ fn require_prop_dir_holds_job_when_dir_vanishes_before_launch() {
     // recovery: dir and config back, release the hold
     drop(g);
     exp_fixture();
-    // slurmd remembers the failed launch of this job id for a while ("already killed, do not
-    // launch batch job"): a release straight away fails the job with exit code 1; 25 s worked, 0 s did not
-    std::thread::sleep(std::time::Duration::from_secs(30));
+    // slurmd keeps the failed launch's revoked credential for CredExpire (120 s). On 24.11 that made an
+    // immediate release fail ("already killed, do not launch batch job"); 25.11 gives each launch a new
+    // SLUID and matches revocations by SLUID (slurmd cred_context.c), so the release can follow at once.
     ok("scontrol", &["release", &id]);
     // the launch-failure requeue also defers the job (Reason=BeginTime); start it now
     ok("scontrol", &["update", &format!("JobId={id}"), "StartTime=now"]);
