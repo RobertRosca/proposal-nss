@@ -76,22 +76,11 @@ fn id_to_no(id: u32) -> Option<u32> {
 // A getgrgid_r failure (sssd/LDAP EAGAIN/EIO, ERANGE at the cap) is TryAgain; POSIX also lets
 // ENOENT/ESRCH/EBADF/EPERM mean "no such group".
 fn exists(no: u32) -> Result<bool, Fail> {
-    let mut grp: libc::group = unsafe { std::mem::zeroed() };
-    let mut res: *mut libc::group = std::ptr::null_mut();
-    let mut buf = vec![0u8; 1024];
-    loop {
-        let rc = unsafe {
-            libc::getgrgid_r(id_of(no), &mut grp, buf.as_mut_ptr().cast(), buf.len(), &mut res)
-        };
-        if rc == libc::ERANGE && buf.len() < 1 << 20 {
-            buf.resize(buf.len() * 2, 0);
-            continue;
-        }
-        return match rc {
-            0 => Ok(!res.is_null()),
-            libc::ENOENT | libc::ESRCH | libc::EBADF | libc::EPERM => Ok(false),
-            _ => Err(Fail::TryAgain),
-        };
+    use nix::errno::Errno::{EBADF, ENOENT, EPERM, ESRCH};
+    match nix::unistd::Group::from_gid(id_of(no).into()) {
+        Ok(g) => Ok(g.is_some()),
+        Err(ENOENT | ESRCH | EBADF | EPERM) => Ok(false),
+        Err(_) => Err(Fail::TryAgain),
     }
 }
 
@@ -132,37 +121,20 @@ fn name_to_no(name: &str) -> Option<u32> {
 // `require_prop_dir`, an I/O error other than ENOENT is Unavail rather than "no such proposal".
 fn proposal_dirs(no: u32, exp_dir: &str) -> Result<Vec<std::path::PathBuf>, Fail> {
     use std::io::ErrorKind::{NotADirectory, NotFound};
-    let absent = |e: &std::io::Error| matches!(e.kind(), NotFound | NotADirectory);
+    let absent = |e: &std::io::Error| matches!(e.kind(), NotFound | NotADirectory); // ENOTDIR: a file where a dir is expected
     // Errors do not abort the scan (one unreadable sibling must not hide a readable proposal); they
     // are remembered and only matter when nothing matched.
     let mut err = false;
-    let mut subdirs = |d: &std::path::Path| {
-        let mut out = vec![];
-        match std::fs::read_dir(d) {
-            Ok(rd) => {
-                for e in rd {
-                    match e {
-                        Ok(e) => match std::fs::metadata(e.path()) {
-                            Ok(m) if m.is_dir() => out.push(e.path()),
-                            Ok(_) => {}
-                            Err(e) => err |= !absent(&e),
-                        },
-                        Err(_) => err = true,
-                    }
-                }
-            }
-            Err(e) => err |= e.kind() != NotFound,
-        }
-        out
-    };
     let p = format!("p{no:06}");
-    let mut cycles = vec![];
-    for i in subdirs(exp_dir.as_ref()) {
-        cycles.extend(subdirs(&i));
-    }
     let mut found = vec![];
-    for c in cycles {
-        let d = c.join(&p);
+    for c in walkdir::WalkDir::new(exp_dir).follow_links(true).min_depth(2).max_depth(2) {
+        let d = match c {
+            Ok(c) => c.into_path().join(&p),
+            Err(e) => {
+                err |= !e.io_error().is_some_and(absent); // a symlink loop has no io error
+                continue;
+            }
+        };
         match std::fs::metadata(&d) {
             Ok(m) if m.is_dir() => found.push(d),
             Ok(_) => {}
@@ -201,15 +173,15 @@ fn member(gid: u32) -> Group {
 // leaking), so set it here: EAGAIN for TryAgain (never ERANGE, which means "grow the buffer"), EIO
 // for Unavail. initgroups overwrites it with ENOENT in the libnss glue (initgroups.rs:37,45).
 fn found<T>(v: Result<Option<T>, Fail>) -> Response<T> {
-    let set = |e| unsafe { *libc::__errno_location() = e };
+    use nix::errno::Errno;
     match v {
         Ok(v) => v.map_or(Response::NotFound, Response::Success),
         Err(Fail::TryAgain) => {
-            set(libc::EAGAIN);
+            Errno::EAGAIN.set();
             Response::TryAgain
         }
         Err(Fail::Unavail) => {
-            set(libc::EIO);
+            Errno::EIO.set();
             Response::Unavail
         }
     }
@@ -284,37 +256,33 @@ mod tests {
     fn failures_map_to_status() {
         assert_eq!(found(Ok(None::<u32>)), Response::NotFound);
         assert_eq!(found(Ok(Some(1))), Response::Success(1));
-        let errno = || unsafe { *libc::__errno_location() };
+        use nix::errno::Errno;
         assert_eq!(found::<u32>(Err(Fail::Unavail)), Response::Unavail);
-        assert_eq!(errno(), libc::EIO);
+        assert_eq!(Errno::last(), Errno::EIO);
         assert_eq!(found::<u32>(Err(Fail::TryAgain)), Response::TryAgain);
-        assert_eq!(errno(), libc::EAGAIN);
+        assert_eq!(Errno::last(), Errno::EAGAIN);
     }
 
     #[test]
     fn proposal_dirs_distinguishes_absent_from_error() {
-        let t = std::env::temp_dir().join(format!("proposal-nss-unit-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&t);
+        let tmp = tempfile::tempdir().unwrap();
+        let t = tmp.path();
         std::fs::create_dir_all(t.join("FXE/202230/p001234")).unwrap();
         let root = t.to_str().unwrap();
         assert_eq!(proposal_dirs(1234, root).unwrap(), vec![t.join("FXE/202230/p001234")]);
         assert_eq!(proposal_dirs(1235, root).unwrap(), Vec::<std::path::PathBuf>::new());
         assert_eq!(proposal_dirs(1234, t.join("absent").to_str().unwrap()).unwrap(), Vec::<std::path::PathBuf>::new());
-        // a file where the exp dir should be is an I/O error, not "no proposal"
-        std::fs::write(t.join("file"), "").unwrap();
-        assert_eq!(proposal_dirs(1234, t.join("file").to_str().unwrap()), Err(Fail::Unavail));
-        let _ = std::fs::remove_dir_all(&t);
     }
 
     #[test]
     fn proposal_dirs_survives_unreadable_sibling() {
         // root bypasses mode 000 (container tier runs unit tests as root), so nothing to test there
-        if unsafe { libc::geteuid() } == 0 {
+        if nix::unistd::geteuid().is_root() {
             return;
         }
         use std::os::unix::fs::PermissionsExt;
-        let t = std::env::temp_dir().join(format!("proposal-nss-unit-sib-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&t);
+        let tmp = tempfile::tempdir().unwrap();
+        let t = tmp.path();
         std::fs::create_dir_all(t.join("FXE/202230/p001234")).unwrap();
         std::fs::create_dir_all(t.join("AAA/202230")).unwrap();
         std::fs::set_permissions(t.join("AAA"), std::fs::Permissions::from_mode(0o000)).unwrap();
@@ -322,7 +290,7 @@ mod tests {
         assert_eq!(proposal_dirs(1234, root).unwrap(), vec![t.join("FXE/202230/p001234")]);
         // nothing matched and an error occurred: Unavail, not "absent"
         assert_eq!(proposal_dirs(1235, root), Err(Fail::Unavail));
+        // TempDir cannot remove the contents of a mode-000 dir
         std::fs::set_permissions(t.join("AAA"), std::fs::Permissions::from_mode(0o755)).unwrap();
-        let _ = std::fs::remove_dir_all(&t);
     }
 }

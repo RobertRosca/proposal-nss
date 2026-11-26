@@ -1,6 +1,8 @@
 // Needs the module installed in nsswitch plus the external group fixtures; see tests/scripts/in-userns.sh and Dockerfile.
 mod common;
 use common::{fails, ok};
+use nix::errno::Errno;
+use nix::unistd::User;
 use rstest::rstest;
 
 const U: &str = "600012342";
@@ -11,24 +13,23 @@ const HOME: &str = ".exfl_prop_syn-home";
 /// Points the module at a fake exp tree through a conf of the test's own: a copy of
 /// /etc/proposal-nss.conf plus `exp_dir`, read by the test-conf module build via PROPOSAL_NSS_CONF.
 /// /etc is never written, so the nss tests run in parallel and never disturb other test binaries.
-struct FakeExp(std::path::PathBuf, std::path::PathBuf);
+struct FakeExp(tempfile::TempDir, #[allow(dead_code)] tempfile::NamedTempFile); // .1 keeps the conf alive
 
 impl FakeExp {
-    fn new(name: &str, dirs: &[&str], require: bool) -> Self {
-        let root = std::env::temp_dir().join(format!("proposal-nss-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+    fn new(dirs: &[&str], require: bool) -> Self {
+        let root = tempfile::tempdir().unwrap();
         for d in dirs {
-            std::fs::create_dir_all(root.join(d)).unwrap();
+            std::fs::create_dir_all(root.path().join(d)).unwrap();
         }
-        let conf = root.with_extension("conf");
+        let conf = tempfile::NamedTempFile::new().unwrap();
         let base = std::fs::read_to_string(CONF).unwrap();
-        std::fs::write(&conf, format!("{base}\nexp_dir = {}\nrequire_prop_dir = {require}\n", root.display())).unwrap();
+        std::fs::write(&conf, format!("{base}\nexp_dir = {}\nrequire_prop_dir = {require}\n", root.path().display())).unwrap();
         // SAFETY: nextest runs each test in its own process and nothing else reads the env concurrently.
-        unsafe { std::env::set_var("PROPOSAL_NSS_CONF", &conf) };
+        unsafe { std::env::set_var("PROPOSAL_NSS_CONF", conf.path()) };
         Self(root, conf)
     }
     fn home(&self, rel: &str) -> String {
-        format!("{}/{rel}/scratch/{HOME}", self.0.display())
+        format!("{}/{rel}/scratch/{HOME}", self.0.path().display())
     }
 }
 
@@ -36,8 +37,6 @@ impl Drop for FakeExp {
     fn drop(&mut self) {
         // SAFETY: as in new().
         unsafe { std::env::remove_var("PROPOSAL_NSS_CONF") };
-        let _ = std::fs::remove_file(&self.1);
-        let _ = std::fs::remove_dir_all(&self.0);
     }
 }
 
@@ -85,9 +84,9 @@ enum Want {
 #[case::require_keeps_user_with_dir(&["FXE/202230/p001234"], true, 1234, Want::Home("FXE/202230/p001234"))]
 #[case::require_still_needs_group(&["FXE/202230/p001235"], true, 1235, Want::Absent)]
 fn home_dir(#[case] dirs: &[&str], #[case] require: bool, #[case] no: u32, #[case] want: Want) {
-    let t = FakeExp::new("t", dirs, require);
-    std::fs::create_dir_all(t.0.join("FXE")).unwrap();
-    std::fs::write(t.0.join("FXE/stray"), "").unwrap();
+    let t = FakeExp::new(dirs, require);
+    std::fs::create_dir_all(t.0.path().join("FXE")).unwrap();
+    std::fs::write(t.0.path().join("FXE/stray"), "").unwrap();
     let name = format!("euxfel-p{no:06}");
     for k in [format!("60{no:06}2"), name.clone()] {
         match &want {
@@ -105,32 +104,33 @@ fn home_dir(#[case] dirs: &[&str], #[case] require: bool, #[case] no: u32, #[cas
 #[test]
 fn missing_exp_dir_falls_back() {
     // exp_dir absent (GPFS not mounted): same fallback as a missing proposal dir
-    let t = FakeExp::new("absent", &[], false);
-    assert!(!t.0.exists());
+    let t = FakeExp::new(&[], false);
+    std::fs::remove_dir(t.0.path()).unwrap();
     assert_eq!(dir_of(U), "/nonexistent");
 }
 
 /// Points the module at a conf of the test's own that is missing, or a directory (read fails with
 /// EISDIR, not ENOENT, even as root) for `unreadable()`. /etc is never touched.
-struct BadConf(std::path::PathBuf);
+struct BadConf {
+    _tmp: tempfile::TempDir,
+}
 
 impl BadConf {
-    fn at(name: &str, dir: bool) -> Self {
-        let p = std::env::temp_dir().join(format!("proposal-nss-{name}-{}.conf", std::process::id()));
-        let _ = std::fs::remove_dir(&p);
-        let _ = std::fs::remove_file(&p);
+    fn at(dir: bool) -> Self {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("conf");
         if dir {
             std::fs::create_dir(&p).unwrap();
         }
         // SAFETY: nextest runs each test in its own process and nothing else reads the env concurrently.
         unsafe { std::env::set_var("PROPOSAL_NSS_CONF", &p) };
-        Self(p)
+        Self { _tmp: tmp }
     }
     fn missing() -> Self {
-        Self::at("missing", false)
+        Self::at(false)
     }
     fn unreadable() -> Self {
-        Self::at("unreadable", true)
+        Self::at(true)
     }
 }
 
@@ -138,36 +138,25 @@ impl Drop for BadConf {
     fn drop(&mut self) {
         // SAFETY: as in at().
         unsafe { std::env::remove_var("PROPOSAL_NSS_CONF") };
-        let _ = std::fs::remove_dir(&self.0);
     }
-}
-
-/// (getpwnam_r return code, no entry returned)
-fn getpwnam_rc(name: &str) -> (i32, bool) {
-    let n = std::ffi::CString::new(name).unwrap();
-    let mut pw: libc::passwd = unsafe { std::mem::zeroed() };
-    let mut res = std::ptr::null_mut();
-    let mut buf = vec![0 as libc::c_char; 4096];
-    let rc = unsafe { libc::getpwnam_r(n.as_ptr(), &mut pw, buf.as_mut_ptr(), buf.len(), &mut res) };
-    (rc, res.is_null())
 }
 
 #[test]
 fn missing_conf_is_a_miss() {
     let _c = BadConf::missing();
-    assert_eq!(getpwnam_rc(N), (0, true));
+    assert_eq!(User::from_name(N), Ok(None));
 }
 
 #[test]
 fn unreadable_conf_is_unavailable_not_absent() {
     let _c = BadConf::unreadable();
-    assert_eq!(getpwnam_rc(N), (libc::EIO, true));
+    assert_eq!(User::from_name(N), Err(Errno::EIO));
 }
 
 #[test]
 fn non_proposal_names_do_not_read_conf() {
     let _c = BadConf::unreadable();
     for k in ["nosuchuser", "euxfel-p1234", "euxfel-p00123x"] {
-        assert_eq!(getpwnam_rc(k), (0, true), "{k}");
+        assert_eq!(User::from_name(k), Ok(None), "{k}");
     }
 }
