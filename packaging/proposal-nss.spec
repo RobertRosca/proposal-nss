@@ -1,5 +1,5 @@
 # Version is overridden by the build target from Cargo.toml.
-%{!?pkg_version:%global pkg_version 0.1.0}
+%{!?pkg_version:%global pkg_version 0.1.1}
 
 Name:           proposal-nss
 Version:        %{pkg_version}
@@ -57,5 +57,8 @@ fi
 %config(noreplace) %{_sysconfdir}/proposal-nss.conf
 
 %changelog
+* Fri Nov 27 2026 Robert Rosca <32569096+RobertRosca@users.noreply.github.com> - 0.1.1-1
+- First release (the v0.1.0 tag is reserved by a deleted immutable release)
+
 * Wed Nov 04 2026 Robert Rosca <32569096+RobertRosca@users.noreply.github.com> - 0.1.0-1
 - Initial package
