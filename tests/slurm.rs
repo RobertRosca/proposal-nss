@@ -1,6 +1,6 @@
 // Needs a running single-node Slurm; see Dockerfile and .config/nextest.toml.
 mod common;
-use common::slurm::{assert_lookup_identical, clear, exp_fixture, job, log, node_state, prop, wait, EXP, SCRATCH};
+use common::slurm::{EXP, SCRATCH, assert_lookup_identical, clear, exp_fixture, job, log, node_state, prop, wait};
 use common::{ok, run};
 use rstest::rstest;
 use std::fs;
@@ -28,7 +28,21 @@ fn proposal_user_job_submits_nested_job_as_itself() {
     .unwrap();
     ok("chmod", &["755", &format!("{d}/outer.sh")]);
 
-    ok("sbatch", &["--uid", U, "--gid", "15355", "--wait", "--chdir", d, "--output", &format!("{d}/outer.out"), &format!("{d}/outer.sh")]);
+    ok(
+        "sbatch",
+        &[
+            "--uid",
+            U,
+            "--gid",
+            "15355",
+            "--wait",
+            "--chdir",
+            d,
+            "--output",
+            &format!("{d}/outer.out"),
+            &format!("{d}/outer.sh"),
+        ],
+    );
 
     let outer = fs::read_to_string(format!("{d}/outer.out")).unwrap();
     // select/linear gives the outer job the whole node, so the inner job only runs once it ends.
@@ -91,7 +105,10 @@ fn proposal_user_job_gets_supplementary_groups() {
 
 fn sacctmgr_add_user(no: u32, account: &str) {
     // sacctmgr resolves the synthetic name through the NSS module: this must work in the container
-    ok("sacctmgr", &["-i", "add", "user", &format!("name=euxfel-p{no:06}"), &format!("account={account}")]);
+    ok(
+        "sacctmgr",
+        &["-i", "add", "user", &format!("name=euxfel-p{no:06}"), &format!("account={account}")],
+    );
 }
 
 const NO_ASSOC: &str = "Invalid account or account/partition combination specified";
@@ -133,7 +150,10 @@ fn accounting_partition_qos_limit_applies_per_proposal_user() {
     });
     ok("scancel", &[&a1, &a2, &b1]);
     assert!(s.0.starts_with("RUNNING"), "first job of 1242: {s:?}");
-    assert!(s.1.starts_with("PENDING") && s.1.contains("QOSMaxJobsPerUserLimit"), "second job of 1242: {s:?}");
+    assert!(
+        s.1.starts_with("PENDING") && s.1.contains("QOSMaxJobsPerUserLimit"),
+        "second job of 1242: {s:?}"
+    );
     assert!(s.2.starts_with("RUNNING"), "first job of 1243: {s:?}");
 }
 
@@ -193,7 +213,11 @@ fn prolog_mkhomedir_creates_per_user_fallback_home_without_proposal_dir() {
     clear(8);
     let cmd = "h=$(getent passwd $(id -u) | cut -d: -f6); echo home=$h; test -d $h -a -w $h && echo writable";
     let (accepted, out) = job("prolog-fallback", &prop(1238), "debug", cmd);
-    assert!(accepted && out.contains(&format!("home={home}\nwritable")), "{out}\nprolog log:\n{}", log("prolog", 8));
+    assert!(
+        accepted && out.contains(&format!("home={home}\nwritable")),
+        "{out}\nprolog log:\n{}",
+        log("prolog", 8)
+    );
     assert_eq!(node_state(), "idle", "{}", log("prolog", 8));
     assert!(!std::path::Path::new("/nonexistent").exists());
     assert!(!std::path::Path::new(home).exists(), "epilog left {home}:\n{}", log("epilog", 8));
@@ -230,7 +254,11 @@ fn prolog_epilog_cleans_synthetic_uid_files_and_processes() {
     clear(7);
     assert!(job("epilog", &prop(1237), "debug", cmd).0);
     for f in ["/tmp/epilog-junk", "/var/tmp/epilog-junk", "/dev/shm/epilog-junk"] {
-        assert!(wait(30, || !std::path::Path::new(f).exists()), "{f} survived; epilog log:\n{}", log("epilog", 7));
+        assert!(
+            wait(30, || !std::path::Path::new(f).exists()),
+            "{f} survived; epilog log:\n{}",
+            log("epilog", 7)
+        );
     }
     // zombies (unreaped by PID 1) do not count
     let gone = wait(30, || !run("sh", &["-c", "ps -u 600012372 -o stat= | grep -qv ^Z"]).0);

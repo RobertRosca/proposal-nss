@@ -1,6 +1,6 @@
 // Needs a running single-node Slurm; see Dockerfile and .config/nextest.toml.
 mod common;
-use common::slurm::{assert_lookup_identical, clear, exp_fixture, job, log, node_state, prop, uid, wait, EXP};
+use common::slurm::{EXP, assert_lookup_identical, clear, exp_fixture, job, log, node_state, prop, uid, wait};
 use common::{ok, require_prop_dir};
 use std::fs;
 
@@ -44,7 +44,10 @@ fn require_prop_dir_lookup_identical_for_root_slurm_and_non_member() {
 
 fn job_field(id: &str, key: &str) -> String {
     let out = ok("scontrol", &["show", "job", id]);
-    out.split_whitespace().find_map(|w| w.strip_prefix(&format!("{key}="))).unwrap_or_default().to_string()
+    out.split_whitespace()
+        .find_map(|w| w.strip_prefix(&format!("{key}=")))
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// The dir disappears while the job is queued (GPFS gone, proposal moved): slurmd cannot resolve
@@ -56,11 +59,40 @@ fn require_prop_dir_holds_job_when_dir_vanishes_before_launch() {
     exp_fixture();
     clear(7);
     // select/linear: the blocker owns the node, so the proposal job stays pending until it ends
-    ok("sbatch", &["--uid", "55636", "--gid", "3555", "--chdir", "/tmp", "--output", "/dev/null", "--wrap", "sleep 8"]);
+    ok(
+        "sbatch",
+        &[
+            "--uid",
+            "55636",
+            "--gid",
+            "3555",
+            "--chdir",
+            "/tmp",
+            "--output",
+            "/dev/null",
+            "--wrap",
+            "sleep 8",
+        ],
+    );
     let out = "/tmp/slurm-req-held.out";
     fs::write(out, "").unwrap();
     ok("chmod", &["666", out]);
-    let id = ok("sbatch", &["--parsable", "--chdir", "/tmp", "--output", out, "--uid", &uid(1237), "--gid", "15355", "--wrap", "echo ran as $(id -un)"]);
+    let id = ok(
+        "sbatch",
+        &[
+            "--parsable",
+            "--chdir",
+            "/tmp",
+            "--output",
+            out,
+            "--uid",
+            &uid(1237),
+            "--gid",
+            "15355",
+            "--wrap",
+            "echo ran as $(id -un)",
+        ],
+    );
     let id = id.trim().to_string();
 
     let g = require_prop_dir();
@@ -72,7 +104,12 @@ fn require_prop_dir_holds_job_when_dir_vanishes_before_launch() {
         state = job_field(&id, "JobState");
         reason == "launch_failed_requeued_held" && state == "PENDING"
     });
-    assert_eq!(reason, "launch_failed_requeued_held", "slurmd log:\n{}", fs::read_to_string("/var/log/slurm/slurmd.log").unwrap_or_default());
+    assert_eq!(
+        reason,
+        "launch_failed_requeued_held",
+        "slurmd log:\n{}",
+        fs::read_to_string("/var/log/slurm/slurmd.log").unwrap_or_default()
+    );
     assert_eq!(state, "PENDING");
     assert_eq!(job_field(&id, "Restarts"), "1");
     assert_eq!(node_state(), "idle");

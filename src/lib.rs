@@ -34,7 +34,13 @@ fn parse(text: &str) -> Option<Conf> {
             _ => return None,
         }
     }
-    Some(Conf { primary_gid: primary?, supp_gid: supp?, exp_dir, require_prop_dir: require, home_fallback_dir: fallback })
+    Some(Conf {
+        primary_gid: primary?,
+        supp_gid: supp?,
+        exp_dir,
+        require_prop_dir: require,
+        home_fallback_dir: fallback,
+    })
 }
 
 // Why a lookup could not be answered; NotFound is reserved for "answered: absent", so Slurm holds
@@ -159,7 +165,11 @@ fn home(dirs: Vec<std::path::PathBuf>, name: &str, uid: u32, c: &Conf) -> String
         .unwrap_or_else(|| {
             let f = format!("{}/{name}", c.home_fallback_dir);
             // `home_fallback_dir = /` (trimmed to "") turns per-user fallback homes off
-            if !c.home_fallback_dir.is_empty() && owned_home(&f, uid) { f } else { "/".into() }
+            if !c.home_fallback_dir.is_empty() && owned_home(&f, uid) {
+                f
+            } else {
+                "/".into()
+            }
         })
 }
 
@@ -191,7 +201,12 @@ fn passwd(no: u32, c: &Conf, dirs: Vec<std::path::PathBuf>) -> Passwd {
 
 // initgroups only reads the gid; the real entries live in other NSS sources.
 fn member(gid: u32) -> Group {
-    Group { name: String::new(), passwd: "x".into(), gid, members: vec![] }
+    Group {
+        name: String::new(),
+        passwd: "x".into(),
+        gid,
+        members: vec![],
+    }
 }
 
 // glibc hands the callers the errno left behind on TryAgain/Unavail, and libnss leaves errno
@@ -259,15 +274,29 @@ mod tests {
         assert_eq!(id_to_no(610_000_002), None);
         let c = parse("# c\nprimary_gid = 15355 # x\nsupplementary_gid=3555\n").unwrap();
         assert_eq!((c.primary_gid, c.supp_gid), (15355, 3555));
-        for bad in ["", "primary_gid=1", "primary_gid=1\nsupplementary_gid=x", "primary_gid=1\nsupplementary_gid=2\nfoo=3", "primary_gid=1\nsupplementary_gid"] {
+        for bad in [
+            "",
+            "primary_gid=1",
+            "primary_gid=1\nsupplementary_gid=x",
+            "primary_gid=1\nsupplementary_gid=2\nfoo=3",
+            "primary_gid=1\nsupplementary_gid",
+        ] {
             assert!(parse(bad).is_none(), "{bad:?}");
         }
         assert_eq!(c.exp_dir, EXP_DIR);
         assert_eq!(parse("primary_gid=1\nsupplementary_gid=2\nexp_dir = /x/y/ # c").unwrap().exp_dir, "/x/y");
         assert!(parse("primary_gid=1\nsupplementary_gid=2\nexp_dir=rel").is_none());
         assert!(c.require_prop_dir);
-        assert!(parse("primary_gid=1\nsupplementary_gid=2\nrequire_prop_dir = true").unwrap().require_prop_dir);
-        assert!(!parse("primary_gid=1\nsupplementary_gid=2\nrequire_prop_dir=false").unwrap().require_prop_dir);
+        assert!(
+            parse("primary_gid=1\nsupplementary_gid=2\nrequire_prop_dir = true")
+                .unwrap()
+                .require_prop_dir
+        );
+        assert!(
+            !parse("primary_gid=1\nsupplementary_gid=2\nrequire_prop_dir=false")
+                .unwrap()
+                .require_prop_dir
+        );
         assert!(parse("primary_gid=1\nsupplementary_gid=2\nrequire_prop_dir=yes").is_none());
         let p = passwd(900_511, &c, vec![]);
         assert_eq!((p.name.as_str(), p.uid, p.gid), ("euxfel-p900511", 609_005_112, 15355));
@@ -306,12 +335,15 @@ mod tests {
         let root = t.to_str().unwrap();
         assert_eq!(proposal_dirs(1234, root).unwrap(), vec![t.join("FXE/202230/p001234")]);
         assert_eq!(proposal_dirs(1235, root).unwrap(), Vec::<std::path::PathBuf>::new());
-        assert_eq!(proposal_dirs(1234, t.join("absent").to_str().unwrap()).unwrap(), Vec::<std::path::PathBuf>::new());
+        assert_eq!(
+            proposal_dirs(1234, t.join("absent").to_str().unwrap()).unwrap(),
+            Vec::<std::path::PathBuf>::new()
+        );
     }
 
     #[test]
     fn fallback_home_refused_unless_owned() {
-        use std::os::unix::fs::{symlink, PermissionsExt};
+        use std::os::unix::fs::{PermissionsExt, symlink};
         let tmp = tempfile::tempdir().unwrap();
         let t = tmp.path();
         std::fs::create_dir(t.join("own")).unwrap();

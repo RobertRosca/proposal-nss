@@ -5,9 +5,11 @@ use std::fs;
 
 /// Polls `f` once a second for up to `secs` seconds; true as soon as it returns true.
 pub fn wait(secs: u32, mut f: impl FnMut() -> bool) -> bool {
-    (0..secs).any(|_| f() || {
-        std::thread::sleep(std::time::Duration::from_secs(1));
-        false
+    (0..secs).any(|_| {
+        f() || {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            false
+        }
     })
 }
 
@@ -22,7 +24,11 @@ pub fn job(name: &str, who: &[impl AsRef<OsStr>], partition: &str, cmd: &str) ->
         .args(["--wrap", cmd])
         .output()
         .unwrap();
-    let text = if o.status.success() { fs::read_to_string(&out).unwrap() } else { String::from_utf8_lossy(&o.stderr).into_owned() };
+    let text = if o.status.success() {
+        fs::read_to_string(&out).unwrap()
+    } else {
+        String::from_utf8_lossy(&o.stderr).into_owned()
+    };
     (o.status.success(), text)
 }
 
