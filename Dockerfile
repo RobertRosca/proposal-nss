@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# Test image: builds the module against the container's glibc, installs it next to a
+# Test image: installs the RPM built here (EL9 glibc) next to a
 # single-node Slurm (munge auth, slurmdbd+MariaDB accounting), then runs the integration tests
 # via cargo-nextest (see .config/nextest.toml). EL9 and Slurm 25.11 to match the target cluster.
 
@@ -62,7 +62,42 @@ EOT
 # prebuilt x86_64 glibc binary; use `linux-arm` on aarch64 hosts
 RUN curl -LsSf "https://get.nexte.st/${NEXTEST_VERSION}/linux" | tar zxf - -C /usr/local/bin
 
-# Stage 3: build the module and test binaries, install the module and sudoers.
+# Stage 3: the RPM, built on the shared base so the test stage installs what ships. Export with
+#   docker build --target rpms --output type=local,dest=dist .
+FROM base AS rpm-build
+RUN dnf -y install rpm-build redhat-rpm-config gcc tar gzip && dnf clean all
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+# cargo vendor needs the lib target to exist; the stub is removed before the real sources arrive.
+# Own layer: source edits keep the downloaded crates cached.
+RUN <<EOT
+#!/bin/bash
+set -euo pipefail
+mkdir src && touch src/lib.rs
+cargo vendor -q --locked vendor
+rm -r src
+EOT
+COPY src src
+COPY docs docs
+COPY packaging packaging
+RUN <<EOT
+#!/bin/bash
+set -euo pipefail
+rustc --version
+ver=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+n=proposal-nss-$ver
+top=$HOME/rpmbuild; mkdir -p $top/SOURCES
+tar czf $top/SOURCES/$n.tar.gz --transform "s,^,$n/," Cargo.toml Cargo.lock src packaging/etc docs
+tar czf $top/SOURCES/$n-vendor.tar.gz vendor
+rpmbuild -ba --define "pkg_version $ver" packaging/proposal-nss.spec
+EOT
+
+# before `test` so a plain build still ends on the test image
+FROM scratch AS rpms
+COPY --from=rpm-build /root/rpmbuild/RPMS /
+COPY --from=rpm-build /root/rpmbuild/SRPMS /srpms
+
+# Stage 4: install the RPM, build the test binaries, add the test-only config.
 FROM base AS test
 WORKDIR /src
 # only what the build and tests read, so edits to docs, CI or packaging specs keep the compile layer
@@ -74,13 +109,21 @@ COPY packaging/etc packaging/etc
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked <<EOT
 #!/bin/bash
 set -euo pipefail
-cargo build --release
 cargo test --release --no-run
 # test-conf module for the nss tests (build-module in .config/nextest.toml, a no-op when nextest reruns it)
 cargo build --lib --features test-conf --target-dir target/test-conf
-install -m644 target/release/libnss_proposal.so /usr/lib64/libnss_proposal.so.2
+EOT
+# own RUN with a bind mount, so RPM changes (docs, spec) keep the compile layer above
+RUN --mount=type=bind,from=rpm-build,source=/root/rpmbuild/RPMS/x86_64,target=/rpms <<EOT
+#!/bin/bash
+set -euo pipefail
+# module and conf come from the package; it ships the sudoers rule only as a %doc (Puppet installs it)
+dnf -y install /rpms/proposal-nss-[0-9]*.rpm
+dnf clean all
+rpm -q proposal-nss
+test -f /usr/lib64/libnss_proposal.so.2
+test -f /etc/proposal-nss.conf
 install -m440 packaging/etc/sudoers.d/proposal-spawner /etc/sudoers.d/proposal-spawner
-install -m644 packaging/etc/proposal-nss.conf /etc/proposal-nss.conf
 # the container is head node too: proposal users without a dir must resolve (tests opt in to require_prop_dir)
 echo 'require_prop_dir = false' >> /etc/proposal-nss.conf
 install -m755 tests/fixtures/prod-prolog/*.sh /etc/slurm/
